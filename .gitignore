@@ -1,0 +1,9 @@
+# Nunca subir nada derivado de la ROM
+*.nds
+assets/
+ghidra_export/
+work/
+.stk/
+tools_bin/
+frontend/build/
+__pycache__/
