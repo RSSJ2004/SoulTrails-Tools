@@ -28,8 +28,8 @@ Peticiones explícitas del usuario:
   decomp (`tools/configure.py`, `ninja`, `objdiff`) en la máquina del usuario. La siguiente sesión
   debería mantener ese criterio o hablarlo con el usuario.
 
-## Estado actual (commit `db8490d`)
-Todos los tests pasan (`python -m unittest discover -s tests` → 15 OK; además
+## Estado actual
+Todos los tests pasan (`python -m unittest discover -s tests` → 18 OK; además
 `frontend/build/layout_test` e `input_test`). **Nada se ha probado aún con la ROM real**: el usuario
 va a hacerlo.
 
@@ -54,7 +54,7 @@ frontend/              SDL2 + Dear ImGui 1.91.5 (FetchContent)
   input.*              InputMapper sin SDL: acciones, 3 asignaciones por acción, palanca→toque, gestos (tajo, giro, voltereta, tocar Link, tocar cursor), cursor con palanca derecha, micrófono, controls.ini
   main.cpp             app: pestañas Pantallas/Controles, "pulsa para asignar", mando con hotplug, lápiz virtual; ScreenSource = interfaz que implementará el juego (hoy TestPattern)
 ghidra_scripts/ExportFunctions.java  exporta {name, addr, size, block, thumb, c}
-tests/                 builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
+tests/                 test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
 ```
 
 ### Comandos de stk
@@ -91,8 +91,15 @@ tests/                 builders.py (archivos DS sintéticos y compresores), test
 5. Huecos conocidos: LDM/STM con bit S (registros de usuario), cambios de modo y bancos de
    registros (IRQ/SVC), STM con base en la lista, coprocesador distinto de CP15, `bkpt`.
    Instrucción no soportada hoy aborta vía `st_unimpl`.
-6. Rendimiento: los registros viven en `c->r[]`; opciones futuras: cachear en variables locales
-   por función, plegar literales constantes de la ROM, eliminar cálculos de flags muertos.
+6. Rendimiento:
+   - ~~Descubrimiento en Python (escaneo de punteros)~~ **hecho**: trazados memorizados por
+     (módulo, dirección, modo), candidatos descartados en cuanto aparece una instrucción
+     indefinida, se salen del módulo, superan el máximo de instrucciones o **empiezan con una
+     instrucción condicional**; la pasada final reutiliza el trazado libre si ningún salto cae en
+     otra función. Sintético de 1,4 MB: 8,3 s → 1,7 s y falsos positivos desde datos del 3 % al
+     0,3 % (`tests/test_discover.py`). Pendiente medir con la ROM real (A.3).
+   - Código generado: los registros viven en `c->r[]`; opciones futuras: cachear en variables
+     locales por función, plegar literales constantes de la ROM, eliminar cálculos de flags muertos.
 7. Tablas de saltos Thumb de MWCC (el compilador del juego): identificar su patrón con la ROM real
    y tratarlo como `TABLE` en lugar de depender del aprendizaje de fallos.
 8. Opción para reproducir el bucle de aprendizaje automáticamente (`stk recomp --learn` que lanza

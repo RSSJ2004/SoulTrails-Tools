@@ -244,3 +244,59 @@ def rom(files: dict[str, bytes], arm9: bytes = b"\0" * 16, arm9_ram: int = 0x020
     struct.pack_into("<II", out, 0x48, fat_off, 8 * len(blobs))
     struct.pack_into("<II", out, 0x50, ovt_off, 32 * len(overlays))
     return bytes(out)
+
+
+# --------------------------------------------------------------- código ARM a mano
+# Palabras ARM fijas para probar el descubrimiento de funciones sin compilador.
+ARM_PUSH = 0xE92D4010      # stmdb sp!, {r4, lr}
+ARM_POP_PC = 0xE8BD8010    # ldmia sp!, {r4, pc}
+ARM_BX_LR = 0xE12FFF1E     # bx lr
+ARM_UNDEF = 0xE7F000F0     # instrucción permanentemente indefinida
+
+
+def arm_mov_r0(imm: int) -> int:
+    return 0xE3A00000 | (imm & 0xFF)
+
+
+def arm_bl(src: int, dst: int) -> int:
+    return 0xEB000000 | (((dst - src - 8) >> 2) & 0xFFFFFF)
+
+
+def code_with_data(base: int, n_funcs: int, n_leaf: int, n_data: int, seed: int = 1):
+    """Módulo sintético: n_funcs funciones con prólogo que se llaman en cadena, n_leaf
+    funciones hoja sin prólogo a las que solo se llega por una tabla de punteros, y una zona
+    de datos con punteros a datos, enteros pequeños y ruido. Devuelve (bytes, info)."""
+    import random
+    rnd = random.Random(seed)
+    words: list[int] = []
+    funcs, leaves = [], []
+    for i in range(n_funcs):
+        a = base + 4 * len(words)
+        funcs.append(a)
+        words += [ARM_PUSH, arm_mov_r0(i), 0, ARM_POP_PC]   # el 0 se parchea con un BL
+    for i, a in enumerate(funcs):
+        nxt = funcs[i + 1] if i + 1 < len(funcs) else funcs[0]
+        words[(a - base) // 4 + 2] = arm_bl(a + 8, nxt)
+    for i in range(n_leaf):
+        leaves.append(base + 4 * len(words))
+        words += [arm_mov_r0(i), ARM_BX_LR]
+    bad_undef = base + 4 * len(words)
+    words += [arm_mov_r0(1), ARM_UNDEF]
+    table = base + 4 * len(words)
+    words += leaves + [bad_undef]
+    dstart = base + 4 * len(words)
+    for _ in range(n_data):
+        r = rnd.random()
+        if r < 0.4:
+            words.append(dstart + 4 * rnd.randrange(n_data))
+        elif r < 0.7:
+            words.append(rnd.randrange(256))
+        else:
+            words.append(rnd.getrandbits(32))
+    # Al final: código que se sale del módulo (sin retorno) y un puntero a él
+    words.append(dstart + 4 * (n_data + 1))
+    off_end = base + 4 * len(words)
+    words += [arm_mov_r0(2), arm_mov_r0(3)]
+    info = {"funcs": funcs, "leaves": leaves, "table": table, "bad_undef": bad_undef,
+            "off_end": off_end, "data": dstart}
+    return struct.pack(f"<{len(words)}I", *words), info
