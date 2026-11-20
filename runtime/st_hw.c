@@ -3,7 +3,8 @@
  * - Registros de E/S con memoria: lo que no está emulado devuelve lo último escrito (muchos
  *   bucles leen lo que acaban de escribir) y se avisa una vez por dirección.
  * - IPCSYNC (0x04000180): el ARM7 no se ejecuta; por defecto "hace eco" de los 4 bits que
- *   publica el ARM9, que es el punto fijo de las esperas de sincronización entre CPU.
+ *   publica el ARM9 (primera sincronización del SDK) y, si el ARM9 se queda leyendo con el mismo
+ *   valor que el ARM7, este cuenta hacia atrás (arranque de la FIFO del PXI).
  * - FIFO del PXI (0x04000184/0x04000188/0x04100000): lo que envía el ARM9 se registra y se
  *   pasa a st_platform.pxi_send (la HLE del ARM7, por hacer); las respuestas se encolan con
  *   st_pxi_reply().
@@ -22,6 +23,8 @@ static uint8_t io_regs[IO_SIZE];          /* 0x04000000-0x04001FFF */
 static uint8_t io_warned[IO_SIZE / 2];    /* aviso único por dirección (media palabra) */
 
 static uint32_t ipc_sync_arm7;            /* bits 0-3 que ve el ARM9 */
+static uint32_t sync_reads;               /* lecturas de IPCSYNC desde la última escritura */
+#define SYNC_ADVANCE_READS 64u
 #define FIFO_LEN 16
 static uint32_t fifo_rx[FIFO_LEN];
 static unsigned fifo_rx_n, fifo_rx_head;
@@ -65,6 +68,7 @@ void st_hw_reset(void) {
     memset(io_regs, 0, sizeof io_regs);
     memset(io_warned, 0, sizeof io_warned);
     ipc_sync_arm7 = 0;
+    sync_reads = 0;
     fifo_rx_n = fifo_rx_head = 0;
     fifo_cnt = 0x0101u;
     poll_addr = poll_count = 0;
@@ -143,6 +147,14 @@ int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
     }
     watch_poll(c, addr);
     if (a == 0x04000180u) {
+        /* Segundo protocolo (arranque de la FIFO del PXI): el ARM9 copia el valor del ARM7 y
+         * espera a que cambie, varias veces seguidas, hasta verlo volver a 0. Si el ARM9 ya
+         * muestra lo mismo que el ARM7 y sigue leyendo sin escribir, el ARM7 avanza (cuenta atrás). */
+        uint32_t arm9_out = (io_get(0x04000180u, 4) >> 8) & 0xFu;
+        if (st_hw_ipcsync_echo && ++sync_reads >= SYNC_ADVANCE_READS && arm9_out == ipc_sync_arm7) {
+            ipc_sync_arm7 = (ipc_sync_arm7 - 1u) & 0xFu;
+            sync_reads = 0;
+        }
         uint32_t v = (io_get(0x04000180u, 4) & 0x4F00u) | (ipc_sync_arm7 & 0xFu);
         *out = v >> ((addr & 3) * 8);
         return 1;
@@ -190,6 +202,7 @@ int st_hw_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
         uint32_t mask = (size == 4 ? 0xFFFFFFFFu : size == 2 ? 0xFFFFu : 0xFFu) << sh;
         full = (full & ~mask) | ((v << sh) & mask);
         io_put(0x04000180u, full & 0x4F00u, 4);
+        sync_reads = 0;
         if (st_hw_ipcsync_echo) ipc_sync_arm7 = (full >> 8) & 0xFu;
         if (st_platform.ipcsync) st_platform.ipcsync(c, (full >> 8) & 0xFu, &ipc_sync_arm7);
         return 1;

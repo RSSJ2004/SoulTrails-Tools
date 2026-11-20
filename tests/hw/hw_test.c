@@ -19,6 +19,28 @@ static void on_pxi(StCpu* c, uint32_t v) { (void)c; sent[nsent++ & 7] = v; }
 static int idles;
 static int on_idle(StCpu* c) { (void)c; idles++; st_hw_frame(); return 1; }
 
+/* Bucle de arranque de la FIFO del PXI tal como lo hace el juego (ver HANDOFF.md): copiar el
+ * valor del ARM7, esperar hasta 1000 lecturas a que cambie, y salir al verlo en 0 tras más de
+ * 4 cambios seguidos. Devuelve las vueltas, o -1 si no termina. */
+static int pxi_fifo_handshake(StCpu* c) {
+    int changes = 0;
+    for (int it = 0; it < 10000; it++) {
+        uint32_t remote = st_read16(c, 0x04000180) & 15;
+        st_write16(c, 0x04000180, (uint16_t)(remote << 8));
+        if (remote == 0 && changes > 4) return it;
+        if ((st_read16(c, 0x04000180) & 15) == remote) {
+            int left = 1000;
+            for (;;) {
+                if (left <= 0) { changes = 0; break; }
+                left--;
+                if ((st_read16(c, 0x04000180) & 15) != remote) break;
+            }
+        }
+        changes++;
+    }
+    return -1;
+}
+
 int main(void) {
     StCpu c;
     st_init(&c);
@@ -37,6 +59,13 @@ int main(void) {
     CHECK(st_read16(&c, 0x04000180) == (0x4300 | 0x3));
     st_write8(&c, 0x04000181, 0x0C);
     CHECK((st_read16(&c, 0x04000180) & 0xF) == 0xC);
+
+    /* Primera sincronización (eco) y arranque de la FIFO del PXI (cuenta atrás) */
+    for (int i = 4; i >= 0; i--) {
+        st_write16(&c, 0x04000180, (uint16_t)(i << 8));
+        CHECK((st_read16(&c, 0x04000180) & 15) == (uint32_t)i);
+    }
+    CHECK(pxi_fifo_handshake(&c) > 0);
 
     /* FIFO: vacía al empezar; enviar llega a la plataforma; respuesta encolada */
     CHECK((st_read16(&c, 0x04000184) & 0x0101) == 0x0101);

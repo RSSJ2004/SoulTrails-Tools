@@ -140,6 +140,14 @@ probablemente la Thumb de `0202B5EC`. La sonda ahora apunta los valores distinto
 escritos y el vigilante dice en qué función está LR (`st_symbol_near`). Siguiente: con los valores
 y `stk disasm 0202B5ED`, modelar la respuesta del ARM7 en IPCSYNC.
 
+**Arranque de la FIFO del PXI** (`arm9:0202B5EC`, Thumb, visto con `stk disasm`): pone
+IPCFIFOCNT=C408, limpia 027FFF88 (marcas de callbacks PXI del ARM9; las del ARM7 serían
+027FFF8C), habilita la IRQ de recepción y entra en un bucle: lee IPCSYNC, copia el valor del ARM7
+en su salida, espera hasta 1000 lecturas a que el ARM7 cambie y sale al ver 0 tras más de 4
+cambios seguidos. Modelo del ARM7: además del eco, si el ARM9 muestra su mismo valor y lee 64
+veces sin escribir, el ARM7 cuenta hacia atrás. Reproducido en `tests/hw/hw_test.c`. Siguiente
+probable: espera a que el ARM7 marque sus callbacks en 027FFF8C o mensajes PXI sin respuesta.
+
 **Fase 1 de `docs/PLAN.md` (sin probar aún con la ROM)**:
 - `runtime/st_dev.c`: cartucho en modo de datos (B7 bloque con redirección <0x8000, B8 ID),
   DMA (inmediata, VBlank, cartucho una palabra por petición, FIFO 3D de golpe), timers con
