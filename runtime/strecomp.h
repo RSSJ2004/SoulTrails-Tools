@@ -116,6 +116,26 @@ void st_thread_note_user_sp(uint32_t old_sp);
 void st_thread_note_saved_sp(uint32_t sp);
 void st_thread_forget_user_sp(void);
 int st_thread_take_prev_sp(uint32_t* sp);
+/* Backend de hardware opcional (p. ej. melonDS, port/melon): si está puesto, la memoria que no
+ * es de acceso directo, la E/S, CP15, el estado de IRQ y el reparto de tiempo pasan por él en vez
+ * del hardware simplificado de st_hw/st_dev/st_vram. */
+typedef struct StBackend {
+    uint8_t* (*ptr)(uint32_t addr, uint32_t size);          /* acceso directo o NULL */
+    uint32_t (*read)(uint32_t addr, int size);
+    void (*write)(uint32_t addr, uint32_t v, int size);
+    uint32_t (*cp15_read)(uint32_t id);                     /* id = crn<<8 | crm<<4 | op2 */
+    void (*cp15_write)(StCpu* c, uint32_t id, uint32_t v);
+    void (*irq_regs)(uint32_t* ime, uint32_t* ie, uint32_t* if_);
+    void (*checkpoint)(StCpu* c, int32_t used);             /* cuenta ciclos y cede el turno */
+} StBackend;
+extern const StBackend* st_backend;
+/* Presupuesto: cada entrada de función / vuelta de bucle resta 1; al agotarse se llama a
+ * st_checkpoint (contabiliza tiempo en el backend y atiende IRQ) */
+#define ST_BUDGET_CHUNK 64
+extern volatile int32_t st_budget;
+void st_checkpoint(StCpu* c);
+void st_irq_refresh(void);                  /* recalcula st_irq_pending desde el backend */
+
 /* IRQ fuera de las esperas: se comprueba al entrar en cada función generada (ST_TRACE) */
 extern volatile int st_irq_pending;
 void st_irq_poll(StCpu* c);
@@ -266,12 +286,12 @@ static inline uint32_t st_ldr32(StCpu* c, uint32_t addr) {
 #define ST_TRACE_LEN 64u
 extern volatile uint32_t st_trace_ring[ST_TRACE_LEN];
 extern volatile uint32_t st_trace_pos;
-#define ST_POLL() do { if (st_irq_pending) st_irq_poll(c); } while (0)
+#define ST_POLL() do { if (--st_budget < 0 || st_irq_pending) st_checkpoint(c); } while (0)
 #ifdef ST_NO_TRACE
-#define ST_TRACE(a) do { if (st_irq_pending) st_irq_poll(c); } while (0)
+#define ST_TRACE(a) ST_POLL()
 #else
 #define ST_TRACE(a) do { st_trace_ring[st_trace_pos++ & (ST_TRACE_LEN - 1)] = (a); \
-                         if (st_irq_pending) st_irq_poll(c); } while (0)
+                         if (--st_budget < 0 || st_irq_pending) st_checkpoint(c); } while (0)
 #endif
 #define ST_RETURN(v) do { c->next_pc = (v); return; } while (0)
 #define ST_INDIRECT(v) do { jt = (v); goto st_dispatch; } while (0)

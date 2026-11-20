@@ -9,7 +9,26 @@
 StIrqState st_irq;
 volatile int st_irq_pending;
 
-static void irq_update(void) { st_irq_pending = (st_irq.ime & 1) && (st_irq.ie & st_irq.if_); }
+const StBackend* st_backend;
+volatile int32_t st_budget = ST_BUDGET_CHUNK;
+
+void st_irq_refresh(void) {
+    if (st_backend) st_backend->irq_regs(&st_irq.ime, &st_irq.ie, &st_irq.if_);
+    st_irq_pending = (st_irq.ime & 1) && (st_irq.ie & st_irq.if_);
+}
+static void irq_update(void) { st_irq_refresh(); }
+
+/* Presupuesto agotado o IRQ pendiente: el backend cuenta el tiempo (y puede ceder el turno al
+ * resto de la consola) y después se atiende la IRQ si la CPU la acepta */
+void st_checkpoint(StCpu* c) {
+    int32_t used = ST_BUDGET_CHUNK - st_budget;
+    st_budget = ST_BUDGET_CHUNK;
+    if (st_backend && st_backend->checkpoint) {
+        st_backend->checkpoint(c, used > 0 ? used : 1);
+        st_irq_refresh();
+    }
+    if (st_irq_pending) st_irq_poll(c);
+}
 
 /* Entrega una IRQ entre "instrucciones" (al entrar en una función generada) si la CPU las
  * acepta (bit I del CPSR a 0). Dentro del manejador el bit I está puesto: no hay anidamiento. */
@@ -29,6 +48,7 @@ static uint32_t* irq_reg(uint32_t addr) {
 }
 
 uint32_t st_io_read(StCpu* c, uint32_t addr, int size) {
+    if (st_backend) return st_backend->read(addr, size);
     uint32_t* r = irq_reg(addr);
     if (!r) {
         uint32_t v;
@@ -40,6 +60,11 @@ uint32_t st_io_read(StCpu* c, uint32_t addr, int size) {
 }
 
 void st_io_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
+    if (st_backend) {
+        st_backend->write(addr, v, size);
+        if ((addr & ~0xFu) == 0x04000200u) st_irq_refresh();   /* IME/IE/IF */
+        return;
+    }
     uint32_t* r = irq_reg(addr);
     if (!r) {
         if (!st_hw_write(c, addr, v, size)) st_platform.io_write(c, addr, v, size);
@@ -58,6 +83,7 @@ void st_raise_irq(uint32_t mask) { st_irq.if_ |= mask; irq_update(); }
 
 /* ----------------------------------------------------------- interrupción */
 int st_irq_service(StCpu* c) {
+    if (st_backend) st_irq_refresh();
     if (!(st_irq.ime & 1) || !(st_irq.ie & st_irq.if_)) return 0;
     uint32_t handler = st_read32(c, st_dtcm_base + 0x3FFC);
     if (!handler) return 0;
@@ -109,7 +135,8 @@ int st_irq_service(StCpu* c) {
 static void intr_wait(StCpu* c, int discard, uint32_t mask) {
     uint32_t flags_addr = st_dtcm_base + 0x3FF8;
     if (discard) st_write32(c, flags_addr, st_read32(c, flags_addr) & ~mask);
-    st_irq.ime = 1;
+    if (st_backend) st_backend->write(ST_IO_IME, 1, 4);
+    else st_irq.ime = 1;
     irq_update();
     for (unsigned idle = 0;;) {
         uint32_t f = st_read32(c, flags_addr);

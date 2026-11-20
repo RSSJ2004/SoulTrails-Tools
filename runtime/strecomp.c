@@ -75,6 +75,7 @@ StPlatform st_platform = {default_io_read, default_io_write, default_swi, defaul
 
 /* ---------------------------------------------------------------- memoria */
 uint8_t* st_ptr(uint32_t addr, uint32_t size) {
+    if (st_backend) return st_backend->ptr(addr, size);
     if (addr - st_dtcm_base < sizeof st_dtcm && addr - st_dtcm_base + size <= sizeof st_dtcm)
         return &st_dtcm[addr - st_dtcm_base];
     if (addr < st_itcm_size) return &st_itcm[addr & (sizeof st_itcm - 1)];
@@ -301,12 +302,18 @@ static uint32_t cp15_regs[16][16][8];
 uint32_t st_mrc(StCpu* c, int cp, int op1, int crn, int crm, int op2) {
     if (cp != 15) return st_platform.coproc(c, cp, op1, crn, crm, op2, 0, 1);
     (void)op1;
+    if (st_backend) return st_backend->cp15_read((uint32_t)(crn << 8 | crm << 4 | op2));
     if (crn == 0 && crm == 0 && op2 == 0) return 0x41059461u; /* ID ARM946E-S */
     return cp15_regs[crn & 15][crm & 15][op2 & 7];
 }
 void st_mcr(StCpu* c, int cp, int op1, int crn, int crm, int op2, uint32_t v) {
     if (cp != 15) { st_platform.coproc(c, cp, op1, crn, crm, op2, v, 0); return; }
     (void)op1;
+    if (st_backend) {
+        if (crn == 9 && crm == 1 && op2 == 0) st_dtcm_base = v & 0xFFFFF000u;   /* lo usa la HLE del BIOS */
+        st_backend->cp15_write(c, (uint32_t)(crn << 8 | crm << 4 | op2), v);
+        return;
+    }
     cp15_regs[crn & 15][crm & 15][op2 & 7] = v;
     if (crn == 9 && crm == 1 && op2 == 0) st_dtcm_base = v & 0xFFFFF000u;         /* DTCM */
     if (crn == 9 && crm == 1 && op2 == 1) {                                          /* ITCM */
