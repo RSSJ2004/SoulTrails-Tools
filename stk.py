@@ -215,9 +215,9 @@ def cmd_doctor(a) -> None:
                                 "Microsoft.VisualStudio.Component.VC.Llvm.Clang", "-property", "installationPath"],
                                capture_output=True, text=True)
             has_clang = bool(r.stdout.strip())
-        check("clang-cl de Visual Studio (port híbrido --melonds)", has_clang or shutil.which("clang-cl"),
-              "Visual Studio Installer > Modificar > Componentes individuales > 'Compilador C++ de Clang para "
-              "Windows' y 'Conjunto de herramientas de MSBuild para LLVM (clang-cl)'")
+        check("clang-cl (port híbrido --melonds: Visual Studio o LLVM)", has_clang or vs_has_clangcl_toolset() or llvm_clang_cl(),
+              "winget install LLVM.LLVM (y Ninja), o en Visual Studio Installer > Modificar > Componentes "
+              "individuales > 'Compilador C++ de Clang para Windows' y 'Conjunto de herramientas de MSBuild para LLVM (clang-cl)'")
     check("cmake (recomp --compile/--learn, frontend)", shutil.which("cmake"),
           "Windows: winget install Kitware.CMake  (o https://cmake.org/download/)")
     cc = c_compiler()
@@ -407,6 +407,47 @@ def c_compiler() -> str | None:
     return None
 
 
+def vs_install_dir() -> Path | None:
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.exists():
+        return None
+    r = subprocess.run([str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
+                       capture_output=True, text=True)
+    return Path(r.stdout.strip()) if r.stdout.strip() else None
+
+
+def vs_has_clangcl_toolset() -> bool:
+    """¿Tiene Visual Studio el componente 'clang-cl' (conjunto de herramientas ClangCL de MSBuild)?"""
+    vs = vs_install_dir()
+    return bool(vs and any((vs / "MSBuild" / "Microsoft" / "VC").glob("v*/Platforms/x64/PlatformToolsets/ClangCL")))
+
+
+def llvm_clang_cl() -> str | None:
+    """clang-cl de una instalación de LLVM aparte (winget install LLVM.LLVM) o del PATH."""
+    found = shutil.which("clang-cl")
+    if found:
+        return found
+    for base in (os.environ.get("ProgramFiles", r"C:\Program Files"), r"C:\Program Files"):
+        cand = Path(base) / "LLVM" / "bin" / "clang-cl.exe"
+        if cand.exists():
+            return str(cand)
+    return None
+
+
+def run_vsenv(cmd: list) -> None:
+    """Ejecuta cmd dentro del entorno de Visual Studio (vcvars64: cabeceras y bibliotecas de Windows)."""
+    vs = vs_install_dir()
+    vcvars = vs / "VC" / "Auxiliary" / "Build" / "vcvars64.bat" if vs else None
+    if not vcvars or not vcvars.exists():
+        sys.exit("No encuentro vcvars64.bat de Visual Studio (Build Tools con 'Desarrollo para el escritorio con C++').")
+    line = " ".join(f'"{c}"' for c in cmd)
+    print(f"$ (entorno de Visual Studio) {line}", flush=True)
+    rc = subprocess.call(f'call "{vcvars}" >nul && {line}', shell=True)
+    if rc != 0:
+        journal(f"FALLO ({rc}): {line}")
+        sys.exit(rc)
+
+
 def port_build(out: Path, opt: str = "release", melon: bool = False) -> Path:
     if not shutil.which("cmake"):
         sys.exit("Falta CMake para compilar el código recompilado.\n"
@@ -421,26 +462,44 @@ def port_build(out: Path, opt: str = "release", melon: bool = False) -> Path:
     bdir = out.parent / (("recomp-build-melon" if melon else "recomp-build") + ("" if opt == "release" else f"-{opt}"))
     # Ninja solo si hay un compilador en el PATH; en Windows sin él, CMake elige Visual Studio
     use_ninja = shutil.which("ninja") and cc != "Visual Studio"
+    # Windows + melonDS sin el componente ClangCL de Visual Studio, pero con LLVM aparte:
+    # Ninja + clang-cl de LLVM dentro del entorno de Visual Studio
+    llvm_cl = None
+    if melon and os.name == "nt" and not vs_has_clangcl_toolset():
+        llvm_cl = llvm_clang_cl()
+        if not llvm_cl or not shutil.which("ninja"):
+            sys.exit("El port híbrido necesita clang-cl: el componente 'Compilador C++ de Clang para Windows' de "
+                     "Visual Studio, o LLVM (winget install LLVM.LLVM) + Ninja (winget install Ninja-build.Ninja).")
+        bdir = bdir.with_name(bdir.name.replace("recomp-build-melon", "recomp-build-melon-llvm"))
     fresh = not (bdir / "CMakeCache.txt").exists()
-    gen = ["-G", "Ninja"] if use_ninja and fresh else []
+    gen = ["-G", "Ninja"] if (use_ninja or llvm_cl) and fresh else []
     extra = []
+    if llvm_cl and fresh:
+        extra += [f"-DCMAKE_C_COMPILER={llvm_cl}", f"-DCMAKE_CXX_COMPILER={llvm_cl}"]
     if melon:
         # Port híbrido: melonDS (GPL-3.0) pone ARM7, sonido, guardado, cartucho y gráficos.
         # No compila con MSVC: con Visual Studio se usa clang-cl (componente "Clang" de las Build Tools).
         extra.append("-DST_MELONDS=ON")
         if os.environ.get("ST_MELONDS_SOURCE"):
             extra.append(f"-DST_MELONDS_SOURCE={os.environ['ST_MELONDS_SOURCE']}")
-        if cc == "Visual Studio" and fresh:
+        if cc == "Visual Studio" and fresh and not llvm_cl:
             extra += ["-T", "ClangCL"]
-    run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", f"-DST_OPT={opt}",
-         "-DCMAKE_BUILD_TYPE=Release", *gen, *extra])
+    configure = ["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", f"-DST_OPT={opt}",
+                 "-DCMAKE_BUILD_TYPE=Release", *gen, *extra]
+    if llvm_cl:
+        run_vsenv(configure)
+    else:
+        run(configure)
     build = ["cmake", "--build", bdir, "--parallel", "--config", "Release"]
     cache = bdir / "CMakeCache.txt"
     if cache.exists() and "CMAKE_GENERATOR:INTERNAL=Visual Studio" in cache.read_text(encoding="utf-8", errors="replace"):
         # Que MSBuild no deje procesos vivos con archivos de build/recomp abiertos
         build += ["--", "/nodeReuse:false"]
     t0 = time.time()
-    run(build)
+    if llvm_cl:
+        run_vsenv(build)
+    else:
+        run(build)
     print(f"Compilado con --opt {opt} en {(time.time() - t0) / 60:.1f} min ({bdir})")
     name = "soultrails_port.exe" if os.name == "nt" else "soultrails_port"
     for cand in (bdir / name, bdir / "Release" / name):

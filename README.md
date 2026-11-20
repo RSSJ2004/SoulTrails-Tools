@@ -114,9 +114,11 @@ Es el mismo enfoque que el port de *Phantom Hourglass* (mismo motor que Spirit T
   en el turno del ARM9, `NDS::RunFrame` cede la ejecución al código recompilado, que corre en fibras
   y devuelve el turno al agotar su presupuesto de ciclos (`st_checkpoint`).
 - La partida se guarda en `saves/<código>.sav` con escritura atómica (archivo temporal + renombrar).
-- **Windows**: melonDS no compila con MSVC; hace falta **clang-cl** (Visual Studio Installer →
-  Modificar → Componentes individuales → "Compilador C++ de Clang para Windows" y "Conjunto de
-  herramientas de MSBuild para LLVM (clang-cl)"). `stk doctor` lo comprueba y `stk` usa `-T ClangCL`.
+- **Windows**: melonDS no compila con MSVC; hace falta **clang-cl**. Vale cualquiera de las dos:
+  LLVM aparte (`winget install LLVM.LLVM`, con Ninja: `stk` compila con Ninja + clang-cl dentro del
+  entorno de Visual Studio, carpeta `build/recomp-build-melon-llvm-*`), o el componente de Visual
+  Studio ("Compilador C++ de Clang para Windows" + "Conjunto de herramientas de MSBuild para LLVM").
+  `stk doctor` lo comprueba.
 - Licencia: con melonDS el port es GPL-3.0 (ver `LICENSE` y `NOTICE.md`).
 
 ## 4. Frontend: pantallas y controles
