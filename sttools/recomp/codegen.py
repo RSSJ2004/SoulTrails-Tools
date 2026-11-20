@@ -1,6 +1,7 @@
 """Generación de C a partir de las funciones analizadas."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from .insn import BRANCH, CALL, COND_C, TABLE, UNDEF, h
@@ -19,6 +20,30 @@ def signature(f: Function) -> int:
 
 def label(addr: int) -> str:
     return f"L_{addr:08X}"
+
+
+def _retry(op, path: Path, what: str):
+    """En Windows un archivo puede estar abierto un momento (MSBuild, el antivirus, un editor)."""
+    for i in range(6):
+        try:
+            return op()
+        except PermissionError:
+            if i == 5:
+                raise SystemExit(f"No puedo {what} {path}: otro proceso lo tiene abierto. Cierra Visual Studio "
+                                 "o el editor que lo use (o espera a que termine la compilación) y repite.")
+            time.sleep(0.5 * (i + 1))
+
+
+def write_if_changed(path: Path, text: str) -> bool:
+    """Escribe solo si cambia: así la compilación incremental no recompila lo que no cambió."""
+    data = text.encode("utf-8")
+    try:
+        if path.read_bytes() == data:
+            return False
+    except OSError:
+        pass
+    _retry(lambda: path.write_bytes(data), path, "escribir")
+    return True
 
 
 class Generator:
@@ -49,7 +74,14 @@ class Generator:
                     and bool(ins.target & 1) == f.thumb):
                 targets.add(ins.target & ~1)
             if ins.kind == TABLE:
-                targets.update(ins.table)
+                targets.update(t for t in ins.table if t in f.insns)
+        # Caída a la siguiente instrucción cuando otra se decodificó en medio (p. ej. un salto a la
+        # segunda mitad de un BL Thumb de 32 bits): el goto necesita su etiqueta.
+        for i, a in enumerate(addrs):
+            ins = f.insns[a]
+            nxt = addrs[i + 1] if i + 1 < len(addrs) else None
+            if not ins.ends_block and nxt != ins.next and ins.next in f.insns:
+                targets.add(ins.next)
         if has_indirect:
             targets.update(addrs)
         tbit = 1 if f.thumb else 0
@@ -101,7 +133,8 @@ class Generator:
             call = f"ST_CALL({name}, {ret});" if name else f"ST_CALL_DYN({h(ins.target)}, {ret});"
             return f"{{ {ins.code} {call} }}"
         if ins.kind == TABLE:
-            cases = " ".join(f"case {k}: goto {label(a)};" for k, a in enumerate(ins.table))
+            cases = " ".join(f"case {k}: goto {label(a)};" if a in f.insns else f"case {k}: ST_TAIL_DYN({h(a | tbit)});"
+                             for k, a in enumerate(ins.table))
             fallback = f"ST_TAIL_DYN({h(ins.addr + 8)} + ({ins.table_reg} << 2));"
             return f"switch ({ins.table_reg}) {{ {cases} default: {fallback} }}"
         return ins.code
@@ -109,8 +142,6 @@ class Generator:
     # ------------------------------------------------------------- archivos
     def write(self, out_dir: Path, per_file: int = 400) -> dict:
         out_dir.mkdir(parents=True, exist_ok=True)
-        for old in out_dir.glob("recomp_*.c"):
-            old.unlink()
         funcs = sorted(self.prog.functions.values(), key=lambda f: (f.module.name, f.addr))
         files = []
         for i in range(0, len(funcs), per_file):
@@ -118,12 +149,12 @@ class Generator:
             path = out_dir / f"recomp_{i // per_file:04d}.c"
             body = [HEADER, '#include "recomp_funcs.h"', ""]
             body += [self.emit_function(f) + "\n" for f in chunk]
-            path.write_text("\n".join(body), encoding="utf-8")
+            write_if_changed(path, "\n".join(body))
             files.append(path.name)
         # Prototipos
         protos = ["#pragma once", '#include "strecomp.h"', ""]
         protos += [f"void {f.cname}(StCpu* c);" for f in funcs]
-        (out_dir / "recomp_funcs.h").write_text("\n".join(protos) + "\n", encoding="utf-8")
+        write_if_changed(out_dir / "recomp_funcs.h", "\n".join(protos) + "\n")
         # Tablas por módulo
         tbl = [HEADER, '#include "recomp_funcs.h"', ""]
         mods = []
@@ -142,16 +173,22 @@ class Generator:
         tbl += mods
         tbl.append("};")
         tbl.append(f"const unsigned st_module_count = {len(mods)};")
-        (out_dir / "recomp_table.c").write_text("\n".join(tbl) + "\n", encoding="utf-8")
+        write_if_changed(out_dir / "recomp_table.c", "\n".join(tbl) + "\n")
         files.append("recomp_table.c")
-        (out_dir / "CMakeLists.txt").write_text(
+        for old in out_dir.glob("recomp_*.c"):
+            if old.name not in files:  # sobran de una ejecución anterior con más archivos
+                _retry(old.unlink, old, "borrar")
+        write_if_changed(out_dir / "CMakeLists.txt",
             "# Generado por stk recomp\n"
             "file(GLOB ST_RECOMP_SOURCES ${CMAKE_CURRENT_LIST_DIR}/*.c)\n"
             "add_library(st_recomp_generated OBJECT ${ST_RECOMP_SOURCES})\n"
             "target_include_directories(st_recomp_generated PUBLIC ${CMAKE_CURRENT_LIST_DIR})\n"
             "target_link_libraries(st_recomp_generated PUBLIC st_runtime)\n"
-            "if(NOT MSVC)\n  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -fno-strict-aliasing)\nendif()\n",
-            encoding="utf-8")
+            "if(MSVC)\n"
+            "  # /MP: compila los .c en paralelo; /bigobj: muchas funciones por archivo;\n"
+            "  # C4102: etiqueta sin usar (normal en el código generado)\n"
+            "  target_compile_options(st_recomp_generated PRIVATE /MP /bigobj /wd4102)\n"
+            "else()\n  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -fno-strict-aliasing)\nendif()\n")
         ninsn = sum(len(f.insns) for f in funcs)
         undef = sorted({(f.module.name, a, i.raw, f.thumb) for f in funcs for a, i in f.insns.items() if i.kind == UNDEF})
         nundef = len(undef)

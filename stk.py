@@ -404,7 +404,12 @@ def port_build(out: Path) -> Path:
     use_ninja = shutil.which("ninja") and cc != "Visual Studio"
     gen = ["-G", "Ninja"] if use_ninja and not (bdir / "CMakeCache.txt").exists() else []
     run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", "-DCMAKE_BUILD_TYPE=Release", *gen])
-    run(["cmake", "--build", bdir, "--parallel", "--config", "Release"])
+    build = ["cmake", "--build", bdir, "--parallel", "--config", "Release"]
+    cache = bdir / "CMakeCache.txt"
+    if cache.exists() and "CMAKE_GENERATOR:INTERNAL=Visual Studio" in cache.read_text(encoding="utf-8", errors="replace"):
+        # Que MSBuild no deje procesos vivos con archivos de build/recomp abiertos
+        build += ["--", "/nodeReuse:false"]
+    run(build)
     name = "soultrails_port.exe" if os.name == "nt" else "soultrails_port"
     for cand in (bdir / name, bdir / "Release" / name):
         if cand.exists():

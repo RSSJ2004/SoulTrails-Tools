@@ -98,6 +98,22 @@ Avisos "llamada en ARM y Thumb a la vez" en 0x20b6520 de 8 overlays → causados
 del estático hacia overlays probados en todos los overlays: ahora exigen prólogo. El usuario no
 tenía CMake: `stk` ahora lo explica (y `doctor` comprueba CMake y compilador; en Windows usa
 Visual Studio si no hay compilador en el PATH).
+**Primera compilación con MSVC** (VS 2026 / MSVC 19.51, generador Visual Studio): compila el
+runtime y los 145 archivos salvo **un error C2094 (etiqueta no definida)**. Causa: un salto a la
+segunda mitad de un BL Thumb de 32 bits decodifica una instrucción "en medio" y la caída del BL
+emitía un `goto` sin etiqueta. Arreglado en `codegen.py` (`tests/test_codegen.py`), igual que las
+entradas de tabla fuera de la función. También: `/MP /bigobj /wd4102` para MSVC, solo se reescriben
+los `.c` que cambian (compilación incremental y evita el `PermissionError` de Windows por archivos
+abiertos) y `/nodeReuse:false` en MSBuild. Ojo: la copia local del usuario era un zip antiguo
+(compilaba en Debug y no escribía `recomp_warnings.txt`): que actualice antes de seguir.
+
+**`report.txt` real, desconocidos (9692)**: `.zob` ZOLB 6476 (listas de objetos por mapa),
+`.zcb` BLCM 345, `.zmb` BPAM 305, `.zbcd` DCBZ 181, `.zab` ZCAB 94, `.ztb` BRTM 17 (formatos de mapa
+del juego con magia de 4 letras invertida, por bloques); `.bncl/.bnbl/.bnll` JNCL/JNBL/JNLL 812
+(disposición de pantallas 2D); `.nbfs/.nbfc/.nbfp` ~900 (pantalla/tiles/paleta **en crudo sin
+cabecera**: conversión directa con `imaging`); `.ntft/.ntfp/.ntfi` ~80 (texturas en crudo: el
+formato y tamaño hay que deducirlos); `.spa` 61 (partículas SPL); `.stb` 46; `.ncl` NCCL 26.
+
 1. `stk rom`: ahora muestra si el **CRC de la cabecera** (0x15E) coincide. Comprobar que se encuentra ModuleParams (marca `21 06 C0 DE DE C0 06 21`, struct en
    marca−0x1C), que el ARM9 se descomprime bien (BLZ) y que salen los autoloads ITCM/DTCM con
    direcciones razonables (ITCM ~0x01FF8000, DTCM ~0x027E0000).
