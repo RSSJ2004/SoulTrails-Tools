@@ -1,5 +1,5 @@
-# Salida de QEMU (-cpu arm946) para tests/cpu/modes.S: palabras de 'results' (sin los ceros finales).
-# Regenerar si cambia modes.S (ver tests/test_cpu_modes.py).
+# Salida de QEMU (-cpu arm946) para tests/cpu/modes.S (+ jt.S en results+400): palabras de 'results' (sin los ceros finales).
+# Regenerar si cambia modes.S o jt.S (ver tests/test_cpu_modes.py).
 11110000
 11110004
 00000081
@@ -74,3 +74,43 @@ AAAA0000
 000000DF
 F80000DF
 0000001F
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000032
+00000046
+00000033
+0000008E
+00000034
+00000048
+00000099
+00000062
+00000036
+00000062
+00000063
+00000062
+00000063
+00000062

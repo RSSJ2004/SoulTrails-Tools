@@ -44,6 +44,7 @@ sttools/recomp/        recompilador estático
   insn.py              Ins (kind: next/branch/call/ret/indirect/table/undef), condiciones
   arm.py               ARMv5TE → C (data-proc, mul/long/DSP, Q*, LDR/STR/H/SB/SH/D, LDM/STM, B/BL/BLX/BX, SWI, MRC/MCR, MRS/MSR, CLZ, SWP, PLD)
   thumb.py             Thumb ARMv5T → C (incl. BL/BLX de 32 bits, bx pc = veneer a ARM)
+  jumptable.py         tablas de saltos Thumb por evaluación del bloque de despacho
   program.py           módulos, descubrimiento (semillas, llamadas, prólogos ARM, escaneo de punteros con filtro "sin instrucciones indefinidas"), tablas addls pc,pc
   codegen.py           una función C por función guest; goto para saltos internos, ST_CALL directo si el destino se resuelve (mismo módulo o estático), si no por el despachador; switch de despacho para saltos indirectos
   driver.py            entrada (--rom o --bin), semillas de Ghidra/archivos/fallos
@@ -57,7 +58,7 @@ frontend/              SDL2 + Dear ImGui 1.91.5 (FetchContent)
   input.*              InputMapper sin SDL: acciones, 3 asignaciones por acción, palanca→toque, gestos (tajo, giro, voltereta, tocar Link, tocar cursor), cursor con palanca derecha, micrófono, controls.ini
   main.cpp             app: pestañas Pantallas/Controles, "pulsa para asignar", mando con hotplug, lápiz virtual; ScreenSource = interfaz que implementará el juego (hoy TestPattern)
 ghidra_scripts/ExportFunctions.java  exporta {name, addr, size, block, thumb, c}
-tests/                 learn/ (prog.c para --learn), bios/ (bios.c, bios_thumb.c) + test_bios, boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + test_boot, cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
+tests/                 learn/ (prog.c para --learn), bios/ (bios.c, bios_thumb.c) + test_bios, boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + test_boot, cpu/ (modes.S, v5rules.S, jt.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
 ```
 
 ### Comandos de stk
@@ -171,8 +172,14 @@ tests/                 learn/ (prog.c para --learn), bios/ (bios.c, bios_thumb.c
      0,3 % (`tests/test_discover.py`). Pendiente medir con la ROM real (A.3).
    - Código generado: los registros viven en `c->r[]`; opciones futuras: cachear en variables
      locales por función, plegar literales constantes de la ROM, eliminar cálculos de flags muertos.
-7. Tablas de saltos Thumb de MWCC (el compilador del juego): identificar su patrón con la ROM real
-   y tratarlo como `TABLE` en lugar de depender del aprendizaje de fallos.
+7. ~~Tablas de saltos Thumb~~ **hecho de forma genérica** (`sttools/recomp/jumptable.py`): ante
+   `add pc, rX` / `mov pc, rX` / `bx rX` se busca `cmp rI, #N` + `bhi/bhs/bgt/bge` y se **evalúa
+   el bloque de despacho** para cada rI en 0..N con un intérprete Thumb mínimo (solo lee datos
+   constantes del módulo). No depende del patrón exacto: cubre desplazamientos de 16 bits con
+   signo sumados al pc y tablas de palabras absolutas (`tests/cpu/jt.S`, comparado con QEMU). En
+   `test_recomp` -O0/-O2 se pasa de 10-11 recompilaciones de aprendizaje a 0. No cubre las tablas
+   por llamada a ayudante de GCC (`__gnu_thumb1_case_*`, solo -Os; MWCC no las usa).
+   Con la ROM real: contar cuántos `ST_INDIRECT` Thumb quedan sin resolver y mirar su forma.
 8. ~~`stk recomp --learn`~~ **hecho**: recompila, compila `soultrails_port`, lo ejecuta con
    `--max-frames` (cada espera del juego = 1 cuadro con su VBlank) y `--timeout`, y si sale con 3
    y apuntó un fallo nuevo, recompila y repite (`--max-iter`). Se para y explica por qué cuando el

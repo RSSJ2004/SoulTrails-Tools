@@ -41,6 +41,7 @@ int main(int argc, char** argv) {
     st_platform.coproc = coproc;
     st_platform.bkpt = bkpt;
     run(ADDR_test_modes);
+    run(ADDR_test_jt);
     uint32_t mode = cpu.cpsr_ctrl & 0x1F, sp = cpu.r[13];
     for (uint32_t a = ADDR_results; a < ADDR_results_end; a += 4) printf("%08X\n", st_read32(&cpu, a));
     printf("--\n");

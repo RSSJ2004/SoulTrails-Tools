@@ -24,7 +24,7 @@ ARMCC = shutil.which("arm-none-eabi-gcc")
 CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 QEMU = shutil.which("qemu-system-arm")
 ENTRIES = {"test_modes": False, "ret1": False, "ret2": False, "ret3": False, "ret4": True, "ret5": False,
-           "test_v5": False}
+           "test_v5": False, "test_jt": True}
 
 
 def sh(*cmd, **kw):
@@ -40,7 +40,7 @@ def hex_lines(text: str) -> list[str]:
 
 def build(d: Path) -> tuple[Path, Path, dict]:
     elf = d / "m.elf"
-    sh(ARMCC, "-mcpu=arm946e-s", "-nostdlib", "-T", C / "modes.ld", C / "modes.S", C / "v5rules.S", "-o", elf)
+    sh(ARMCC, "-mcpu=arm946e-s", "-nostdlib", "-T", C / "modes.ld", C / "modes.S", C / "v5rules.S", C / "jt.S", "-o", elf)
     sh("arm-none-eabi-objcopy", "-O", "binary", elf, d / "m.bin")
     syms = {}
     for line in sh("arm-none-eabi-nm", elf).splitlines():
@@ -80,6 +80,13 @@ class CpuModes(unittest.TestCase):
                *sorted((ROOT / "runtime").glob("*.c")), *sorted(out.glob("*.c")), "-o", d / "harness")
             got = sh(d / "harness", binary)
             modes, v5 = got.split("--\n")
+            # Las tablas Thumb se resolvieron en el análisis: sus casos son etiquetas internas
+            gen = "".join(p.read_text() for p in out.glob("recomp_0*.c"))
+            for lab in ("jt_h0", "jt_h1", "jt_h2", "jt_h3", "jt_h4", "jt_w0", "jt_w1", "jt_w2"):
+                self.assertIn(f"L_{syms[lab]:08X}:", gen, lab)
+            jt = hex_lines(modes)[100:114]
+            self.assertEqual([int(x, 16) for x in jt],
+                             [50, 70, 51, 142, 52, 72, 153, 98, 54, 98, 99, 98, 99, 98])
             n = (syms["results_end"] - syms["results"]) // 4
             self.assertEqual(hex_lines(modes), (expected + ["00000000"] * n)[:n])
             buf, buf2 = syms["buf"], syms["buf2"]

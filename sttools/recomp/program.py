@@ -4,8 +4,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
-from . import arm, thumb
-from .insn import BRANCH, CALL, TABLE, UNDEF, Ins
+from . import arm, jumptable, thumb
+from .insn import BRANCH, CALL, INDIRECT, TABLE, UNDEF, Ins
 
 
 @dataclass
@@ -64,6 +64,7 @@ class Program:
         # Trazados sin inicios conocidos (dependen solo de módulo, dirección y modo)
         self._traces: dict[tuple[str, int, bool], Function] = {}
         self._plausible: dict[tuple[str, int, bool], bool] = {}
+        self._thumb_tables: dict[tuple[str, int], list[int] | None] = {}
 
     # ----------------------------------------------------------- memoria
     def module_for(self, addr: int, prefer: Module | None = None) -> Module | None:
@@ -181,6 +182,10 @@ class Program:
                     work.append(ea)
             elif ins.kind == CALL and ins.target is not None:
                 f.calls.add(ins.target)
+            elif ins.kind == INDIRECT and is_thumb:
+                tg = self.thumb_table(m, a)
+                if tg:
+                    work.extend(tg)
             if not ins.ends_block:
                 work.append(ins.next)
         return f
@@ -214,6 +219,14 @@ class Program:
                 if t != f.addr and (name, t) in starts:
                     return True
         return False
+
+    def thumb_table(self, m: Module, addr: int) -> list[int] | None:
+        """Destinos de una tabla de saltos Thumb en addr (ver jumptable.py), memorizado."""
+        key = (m.name, addr)
+        if key not in self._thumb_tables:
+            r16, rmem = jumptable.module_readers(m)
+            self._thumb_tables[key] = jumptable.thumb_targets(r16, rmem, addr, m.contains)
+        return self._thumb_tables[key]
 
     def trace_free(self, m: Module, addr: int, is_thumb: bool) -> Function:
         """trace() sin inicios conocidos, memorizado."""

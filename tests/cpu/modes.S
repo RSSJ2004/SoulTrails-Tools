@@ -10,6 +10,8 @@
 qemu_start:                         @ solo en QEMU: arranca en SVC
     ldr sp, =0x02300000
     bl test_modes
+    ldr r0, =test_jt + 1
+    blx r0
     ldr r4, =results
     ldr r5, =results_end
 1:  cmp r4, r5
@@ -222,5 +224,5 @@ retframe:  .word 0x00C0FFEE, ret2
 saved:     .word 0, 0, 0
 hexbuf:    .space 16
     .global results, results_end
-results:   .space 4 * 96
+results:   .space 4 * 120
 results_end:
