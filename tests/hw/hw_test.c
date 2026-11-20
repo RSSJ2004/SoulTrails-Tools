@@ -178,6 +178,32 @@ int main(void) {
     st_write32(&c, 0x04000214, 0x8u);
     CHECK(!st_irq_pending);
 
+    /* VRAM y motor 2D A: banco A como fondos, banco B como objetos */
+    st_write8(&c, 0x04000240, 0x81);                      /* A -> BG-A */
+    st_write8(&c, 0x04000241, 0x82);                      /* B -> OBJ-A */
+    st_write16(&c, 0x05000000, 0x7C00);                   /* fondo (backdrop): azul */
+    st_write16(&c, 0x05000002, 0x001F);                   /* BG paleta 0, color 1: rojo */
+    st_write16(&c, 0x05000204, 0x03E0);                   /* OBJ paleta 0, color 2: verde */
+    for (int i = 0; i < 32; i += 2) st_write16(&c, 0x06000020 + (uint32_t)i, 0x1111);   /* tile 1 de fondo */
+    st_write16(&c, 0x06000800, 0x0001);                   /* mapa (base 1 = 0x800): tile 1 en (0,0) */
+    CHECK(st_vram[0x800] == 1);                           /* el banco A recibe lo escrito en BG-A */
+    CHECK(st_read16(&c, 0x06800800) == 1);                /* y se ve por LCDC */
+    for (int i = 0; i < 32; i += 2) st_write16(&c, 0x06400040 + (uint32_t)i, 0x2222);   /* tile 2 de objetos */
+    st_write16(&c, 0x04000008, 0x0100);                   /* BG0CNT: char 0, screen 1 */
+    st_write16(&c, 0x07000000, 0x0000);                   /* OBJ 0: y 0, 8x8 */
+    st_write16(&c, 0x07000002, 0x0010);                   /* x 16 */
+    st_write16(&c, 0x07000004, 0x0002);                   /* tile 2 */
+    for (int i = 1; i < 128; i++) st_write16(&c, 0x07000000 + (uint32_t)i * 8, 0x0200);   /* resto ocultos */
+    st_write32(&c, 0x04000000, 0x00011110u);              /* gráficos, BG0 + OBJ, OBJ 1D */
+    static uint32_t img[256 * 192];
+    st_gpu2d_render(0, img);
+    CHECK(img[0] == 0xFFFF0000u);                         /* rojo */
+    CHECK(img[8] == 0xFF0000FFu);                         /* fondo azul */
+    CHECK(img[16] == 0xFF00FF00u);                        /* sprite verde */
+    st_write16(&c, 0x0400006C, 0x8010);                   /* brillo maestro: negro */
+    st_gpu2d_render(0, img);
+    CHECK(img[0] == 0xFF000000u);
+
     printf(fails ? "hw: %d fallos\n" : "hw: OK\n", fails);
     return fails != 0;
 }

@@ -49,6 +49,10 @@ static void io_put(uint32_t addr, uint32_t v, int size) {
     memcpy(&io_regs[addr & (IO_SIZE - 1)], &v, (size_t)size);
 }
 
+/* Lectura directa de registros para los renderizadores (sin efectos secundarios) */
+uint16_t st_io16(uint32_t addr) { return (uint16_t)io_get(addr, 2); }
+uint32_t st_io32(uint32_t addr) { return io_get(addr, 4); }
+
 static const char* io_name(uint32_t a) {
     switch (a & ~1u) {
     case 0x04000004: return "DISPSTAT";

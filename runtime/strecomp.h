@@ -128,6 +128,13 @@ extern uint8_t st_oam[2 * 1024];
 extern uint8_t st_vram[656 * 1024];
 extern uint32_t st_dtcm_base;
 
+uint8_t* st_vram_ptr(uint32_t addr);              /* VRAM con los bancos asignados */
+void st_vram_reset(void);
+int st_vram_cnt_write(uint32_t addr, uint32_t v, int size);
+int st_vram_cnt_read(uint32_t addr, int size, uint32_t* out);
+/* Motores 2D (st_gpu2d.c): 256x192 en 0xAARRGGBB; frame elige arriba/abajo con POWCNT1 */
+void st_gpu2d_render(int engine, uint32_t* out);
+void st_gpu2d_frame(uint32_t* top, uint32_t* bottom);
 uint8_t* st_ptr(uint32_t addr, uint32_t size);   /* NULL si es IO o no mapeado */
 uint32_t st_read8(StCpu* c, uint32_t addr);
 uint32_t st_read16(StCpu* c, uint32_t addr);

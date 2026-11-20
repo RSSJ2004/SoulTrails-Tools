@@ -193,6 +193,7 @@ void st_dev_reset(void) {
     cart_len = cart_pos = 0;
     romctrl = auxspicnt = 0;
     memset(cart_cmd, 0, sizeof cart_cmd);
+    st_vram_reset();
 }
 
 static uint32_t sub(uint32_t full, uint32_t addr, int size) {
@@ -207,6 +208,7 @@ static uint32_t merge(uint32_t full, uint32_t addr, uint32_t v, int size) {
 
 int st_dev_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
     uint32_t a = addr & ~3u;
+    if (st_vram_cnt_read(addr, size, out)) return 1;
     if (a >= 0x040000B0u && a < 0x040000E0u) {
         int i = (int)((a - 0x040000B0u) / 12), r = (int)((a - 0x040000B0u) % 12);
         *out = sub(r == 0 ? dma[i].sad : r == 4 ? dma[i].dad : dma[i].cnt, addr, size);
@@ -234,6 +236,7 @@ int st_dev_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
 
 int st_dev_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
     uint32_t a = addr & ~3u;
+    if (st_vram_cnt_write(addr, v, size)) return 0;   /* además se guarda en los registros (lectura de los motores) */
     if (a >= 0x040000B0u && a < 0x040000E0u) {
         int i = (int)((a - 0x040000B0u) / 12), r = (int)((a - 0x040000B0u) % 12);
         if (r == 0) dma[i].sad = merge(dma[i].sad, addr, v, size);

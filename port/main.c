@@ -25,9 +25,48 @@
 static StCpu cpu;
 static unsigned long frames, max_frames;
 
-/* Sin GPU todavía: cada espera del juego cuenta como un cuadro con su VBlank */
+/* Capturas: cada N cuadros, las dos pantallas (2D por software) en un BMP de 256x384 */
+static unsigned dump_every;
+static const char* dump_dir = ".";
+
+static void write_bmp(const char* path, const uint32_t* top, const uint32_t* bottom) {
+    FILE* f = fopen(path, "wb");
+    if (!f) return;
+    const int w = 256, h = 384, row = w * 3, size = 54 + row * h;
+    uint8_t hd[54] = {'B', 'M'};
+    hd[2] = (uint8_t)size; hd[3] = (uint8_t)(size >> 8); hd[4] = (uint8_t)(size >> 16);
+    hd[10] = 54; hd[14] = 40;
+    hd[18] = (uint8_t)w; hd[19] = (uint8_t)(w >> 8);
+    hd[22] = (uint8_t)h; hd[23] = (uint8_t)(h >> 8);
+    hd[26] = 1; hd[28] = 24;
+    fwrite(hd, 1, sizeof hd, f);
+    uint8_t line[256 * 3];
+    for (int y = h - 1; y >= 0; y--) {   /* BMP: de abajo arriba */
+        const uint32_t* src = y < 192 ? top + y * 256 : bottom + (y - 192) * 256;
+        for (int x = 0; x < w; x++) {
+            line[x * 3] = (uint8_t)src[x];
+            line[x * 3 + 1] = (uint8_t)(src[x] >> 8);
+            line[x * 3 + 2] = (uint8_t)(src[x] >> 16);
+        }
+        fwrite(line, 1, sizeof line, f);
+    }
+    fclose(f);
+}
+
+static void dump_frame(void) {
+    static uint32_t top[256 * 192], bottom[256 * 192];
+    char path[512];
+    st_gpu2d_frame(top, bottom);
+    snprintf(path, sizeof path, "%s/frame_%05lu.bmp", dump_dir, frames);
+    write_bmp(path, top, bottom);
+}
+
+/* Cada espera del juego cuenta como un cuadro con su VBlank (sin ventana todavía) */
 static int on_idle(StCpu* c) {
-    if (max_frames && ++frames >= max_frames) {
+    frames++;
+    if (dump_every && frames % dump_every == 0) dump_frame();
+    if (max_frames && frames >= max_frames) {
+        if (dump_every) dump_frame();
         printf("[port] %lu cuadros sin fallos\n", frames);
         exit(0);
     }
@@ -133,13 +172,15 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom_path = argv[++i];
         else if (!strcmp(argv[i], "--misses") && i + 1 < argc) misses = argv[++i];
         else if (!strcmp(argv[i], "--max-frames") && i + 1 < argc) max_frames = strtoul(argv[++i], NULL, 10);
+        else if (!strcmp(argv[i], "--dump-frames") && i + 1 < argc) dump_every = (unsigned)strtoul(argv[++i], NULL, 10);
+        else if (!strcmp(argv[i], "--frames-dir") && i + 1 < argc) dump_dir = argv[++i];
         else if (!strcmp(argv[i], "--lang") && i + 1 < argc) {
             static const char* langs[] = {"ja", "en", "fr", "de", "it", "es"};
             const char* l = argv[++i];
             for (int k = 0; k < 6; k++) if (!strcmp(l, langs[k])) st_boot_language = k;
         }
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) watchdog_secs = (unsigned)strtoul(argv[++i], NULL, 10);
-        else { fprintf(stderr, "uso: %s --rom juego.nds [--misses archivo] [--max-frames N] [--watchdog S] [--lang es|en|fr|de|it|ja]\n", argv[0]); return 2; }
+        else { fprintf(stderr, "uso: %s --rom juego.nds [--misses archivo] [--max-frames N] [--watchdog S] [--lang es|en|fr|de|it|ja] [--dump-frames N] [--frames-dir D]\n", argv[0]); return 2; }
     }
     if (!rom_path) { fprintf(stderr, "falta --rom\n"); return 2; }
     StRom rom;

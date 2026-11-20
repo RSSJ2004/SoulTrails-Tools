@@ -82,10 +82,7 @@ uint8_t* st_ptr(uint32_t addr, uint32_t size) {
     case 0x02: return &st_main_ram[addr & (ST_MAIN_RAM_SIZE - 1)];
     case 0x03: return &st_wram[addr & (sizeof st_wram - 1)];
     case 0x05: return &st_palette[addr & (sizeof st_palette - 1)];
-    case 0x06: {
-        uint32_t o = addr & 0xFFFFF;
-        return o + size <= sizeof st_vram ? &st_vram[o] : NULL;
-    }
+    case 0x06: return st_vram_ptr(addr);   /* bancos A-I según VRAMCNT (st_vram.c) */
     case 0x07: return &st_oam[addr & (sizeof st_oam - 1)];
     default: return NULL;
     }

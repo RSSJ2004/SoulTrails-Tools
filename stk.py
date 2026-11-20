@@ -344,6 +344,7 @@ def cmd_assets(a) -> None:
 MISSES = STATE_DIR / "recomp_misses.txt"
 WARNINGS = STATE_DIR / "recomp_warnings.txt"
 DECOMP_SYMBOLS = STATE_DIR / "decomp_symbols.txt"
+FRAMES_DIR = STATE_DIR / "frames"
 
 
 def recomp_once(a, cfg, rom, out: Path) -> dict:
@@ -457,6 +458,9 @@ def cmd_recomp(a) -> None:
             before = set(miss_lines())
             cmd = [str(exe), "--rom", cfg["rom"], "--misses", str(MISSES), "--max-frames", str(a.max_frames),
                    "--watchdog", str(max(5, a.timeout - 10))]
+            if a.dump_frames:
+                FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+                cmd += ["--dump-frames", str(a.dump_frames), "--frames-dir", str(FRAMES_DIR)]
             print(f"[learn {it}] $ {' '.join(cmd)}", flush=True)
             try:
                 p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=a.timeout)
@@ -886,6 +890,8 @@ def main() -> None:
     s.add_argument("--max-iter", type=int, default=50, help="máximo de vueltas de --learn")
     s.add_argument("--max-frames", type=int, default=600, help="cuadros que se deja correr el port en cada vuelta")
     s.add_argument("--timeout", type=int, default=120, help="segundos máximos por ejecución del port")
+    s.add_argument("--dump-frames", type=int, default=60,
+                   help="con --learn, guarda las dos pantallas cada N cuadros en .stk/frames (0 = no)")
     s.set_defaults(fn=cmd_recomp)
 
     s = sub.add_parser("disasm", help="desensambla funciones de tu ROM (diagnóstico)")
