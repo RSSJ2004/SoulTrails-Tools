@@ -148,6 +148,10 @@ cambios seguidos. Modelo del ARM7: además del eco, si el ARM9 muestra su mismo 
 veces sin escribir, el ARM7 cuenta hacia atrás. Reproducido en `tests/hw/hw_test.c`. Siguiente
 probable: espera a que el ARM7 marque sus callbacks en 027FFF8C o mensajes PXI sin respuesta.
 
+**Tras la FIFO**: el juego espera en `arm9:02028188` llamando a `0202B6E0` (r0=0xC) que lee
+`027FFF8C` = 0: marcas de tags del PXI registrados por el ARM7. El arranque ahora pone
+`st_boot_arm7_tags` (todos) ahí. Siguiente previsible: mensajes PXI que esperan respuesta.
+
 **Fase 1 de `docs/PLAN.md` (sin probar aún con la ROM)**:
 - `runtime/st_dev.c`: cartucho en modo de datos (B7 bloque con redirección <0x8000, B8 ID),
   DMA (inmediata, VBlank, cartucho una palabra por petición, FIFO 3D de golpe), timers con

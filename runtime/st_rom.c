@@ -70,6 +70,7 @@ int st_rom_overlay(const StRom* rom, int index, StOverlayInfo* o) {
     return 0;
 }
 
+uint32_t st_boot_arm7_tags = 0xFFFFFFFFu;   /* tags del PXI que el ARM7 HLE declara atendidos */
 int st_boot_language = 5;   /* idioma de la consola: 0 ja, 1 en, 2 fr, 3 de, 4 it, 5 es */
 
 static void put16(uint32_t a, uint16_t v) { st_load(a, &v, 2); }
@@ -101,6 +102,9 @@ static void boot_system_area(const StRom* rom) {
     put16(0x027FF810u, 0xFFFFu);
     put16(0x027FF850u, 0x5835u);
     put16(0x027FFC40u, 1);            /* indicador de arranque: normal */
+    /* El ARM7 real marca aquí qué tags del PXI atiende al registrar sus callbacks; el ARM9 espera
+     * a verlos antes de usar cada servicio (visto con la ROM: bucle sobre 027FFF8C). */
+    put32(0x027FFF8Cu, st_boot_arm7_tags);
     /* Ajustes de usuario (0x70 bytes en 27FFC80h) */
     uint32_t u = 0x027FFC80u;
     static const uint16_t nick[] = {'L', 'i', 'n', 'k'};
