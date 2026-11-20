@@ -122,6 +122,8 @@ class EndToEnd(unittest.TestCase):
             "song.sseq": b"SSEQ" + bytes(60),          # sin conversor todavía
             "a.zzz": b"ZZZ1" + bytes(12),               # formato propio inventado
             "b.zzz": b"ZZZ1" + bytes(20),
+            "c.qqq": b"\x01\x02\x03\x04" + bytes(12),    # desconocido de verdad
+            "d.qqq": b"\x01\x02\x03\x04" + bytes(20),
         }
         ov_code = b"\x01\x02\x03\x04" * 200
         rom = B.rom(files, overlays=[(0x02100000, B.blz_compress(ov_code), True)])
@@ -143,7 +145,9 @@ class EndToEnd(unittest.TestCase):
             self.assertRegex(rep, r"nsbtx +2 +2 +0 +0")             # el suelto y el del NARC
             self.assertIn("sseq: 1  p. ej. song.sseq", rep)
             self.assertIn("(sin conversor todavía)", rep)
-            self.assertRegex(rep, r"2  \.zzz +cabecera ZZZ1")       # desconocidos agrupados
+            self.assertRegex(rep, r"2  \.qqq +cabecera \.\.\.\. \(01020304\)")  # desconocidos agrupados
+            self.assertRegex(rep, r"zzz \(2\):\n +2  ZZZ1")                       # formato por bloques
+            self.assertTrue((out / "converted" / "a.zzz.json").exists())
             self.assertRegex(rep, r"narc +1 +0 +0 +0  \(contenedor")
 
 

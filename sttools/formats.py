@@ -270,7 +270,11 @@ def nscr_to_png(data: bytes, g, pal, dest: Path) -> None:
     w = u16(data, p + 8)
     h = u16(data, p + 0xA)
     size = u32(data, p + 0x10)
-    entries = data[p + 0x14: p + 0x14 + size]
+    screen_to_png(data[p + 0x14: p + 0x14 + size], w, h, g, pal, dest)
+
+
+def screen_to_png(entries: bytes, w: int, h: int, g, pal, dest: Path) -> None:
+    """Entradas de pantalla de fondo (16 bits: tile, volteos, paleta) -> PNG."""
     tw = w // 8
     rgba = bytearray(w * h * 4)
     for i in range(min(len(entries) // 2, tw * (h // 8))):

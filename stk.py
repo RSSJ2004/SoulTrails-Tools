@@ -389,7 +389,7 @@ def c_compiler() -> str | None:
     return None
 
 
-def port_build(out: Path) -> Path:
+def port_build(out: Path, opt: str = "release") -> Path:
     if not shutil.which("cmake"):
         sys.exit("Falta CMake para compilar el código recompilado.\n"
                  "  Windows: winget install Kitware.CMake  (o https://cmake.org/download/, marca 'añadir al PATH')\n"
@@ -399,17 +399,20 @@ def port_build(out: Path) -> Path:
     if not cc:
         sys.exit("Falta un compilador de C. Windows: Visual Studio Build Tools con 'Desarrollo para el escritorio con C++' "
                  "(winget install Microsoft.VisualStudio.2022.BuildTools) o MinGW-w64. Comprueba con: python stk.py doctor")
-    bdir = out.parent / "recomp-build"
+    # Una carpeta por nivel: cambiar de nivel no obliga a recompilarlo todo
+    bdir = out.parent / ("recomp-build" if opt == "release" else f"recomp-build-{opt}")
     # Ninja solo si hay un compilador en el PATH; en Windows sin él, CMake elige Visual Studio
     use_ninja = shutil.which("ninja") and cc != "Visual Studio"
     gen = ["-G", "Ninja"] if use_ninja and not (bdir / "CMakeCache.txt").exists() else []
-    run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", "-DCMAKE_BUILD_TYPE=Release", *gen])
+    run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", f"-DST_OPT={opt}", "-DCMAKE_BUILD_TYPE=Release", *gen])
     build = ["cmake", "--build", bdir, "--parallel", "--config", "Release"]
     cache = bdir / "CMakeCache.txt"
     if cache.exists() and "CMAKE_GENERATOR:INTERNAL=Visual Studio" in cache.read_text(encoding="utf-8", errors="replace"):
         # Que MSBuild no deje procesos vivos con archivos de build/recomp abiertos
         build += ["--", "/nodeReuse:false"]
+    t0 = time.time()
     run(build)
+    print(f"Compilado con --opt {opt} en {(time.time() - t0) / 60:.1f} min ({bdir})")
     name = "soultrails_port.exe" if os.name == "nt" else "soultrails_port"
     for cand in (bdir / name, bdir / "Release" / name):
         if cand.exists():
@@ -433,11 +436,12 @@ def cmd_recomp(a) -> None:
     out = Path(a.out or HOME / "build" / "recomp").resolve()
     rom = Rom.load(cfg["rom"])
     MISSES.parent.mkdir(parents=True, exist_ok=True)
+    a.opt = a.opt or ("fast" if a.learn else "release")
     res = recomp_once(a, cfg, rom, out)
     print(f"El runtime registra direcciones desconocidas en {MISSES}; vuelve a ejecutar `stk recomp` para incluirlas.")
     exe = None
     if a.compile or a.learn:
-        exe = port_build(out)
+        exe = port_build(out, a.opt)
         print(f"El código recompilado compila correctamente ({exe.parent}).")
         print(f"Ejecutable: {exe} --rom {cfg['rom']} --misses {MISSES}")
     learned = 0
@@ -465,7 +469,7 @@ def cmd_recomp(a) -> None:
             learned += len(new)
             print(f"[learn {it}] aprendido: {', '.join(new)}")
             res = recomp_once(a, cfg, rom, out)
-            port_build(out)
+            port_build(out, a.opt)
         else:
             print(f"[learn] se alcanzó --max-iter {a.max_iter}")
         print(f"Aprendizaje: {learned} direcciones nuevas, {res['functions']} funciones")
@@ -785,6 +789,9 @@ def main() -> None:
     s.add_argument("--hook", action="append", default=[], help="función a reemplazar en tiempo de ejecución (hex)")
     s.add_argument("--no-comments", action="store_true")
     s.add_argument("--compile", action="store_true", help="compila el resultado para verificarlo (necesita cmake)")
+    s.add_argument("--opt", choices=["fast", "medium", "release"], default=None,
+                   help="optimización del C: fast (sin optimizar, compila mucho antes; por defecto con --learn), "
+                        "medium o release (/O2, la más lenta de compilar; por defecto con --compile)")
     s.add_argument("--learn", action="store_true",
                    help="repite recompilar -> ejecutar el port -> aprender fallos hasta que no haya más")
     s.add_argument("--max-iter", type=int, default=50, help="máximo de vueltas de --learn")

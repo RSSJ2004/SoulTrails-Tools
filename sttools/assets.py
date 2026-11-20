@@ -17,6 +17,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import formats as F
+from . import gamefmt as G
 from .nds import Rom, looks_lz, lz_decompress, parse_narc
 
 MAGICS = {
@@ -50,6 +51,9 @@ class Extractor:
         self.errors: list[dict] = []
         self.pending_2d: dict[Path, dict[str, bytes]] = {}
         self.entries_2d: dict[tuple, dict] = {}
+        # Formatos en crudo (.nbf*, .ntf*): carpeta -> {nombre: datos} y su entrada del manifiesto
+        self.pending_raw: dict[tuple[str, Path], dict[str, bytes]] = {}
+        self.entries_raw: dict[tuple[Path, str], dict] = {}
 
     # -------------------------------------------------------------- general
     def log(self, msg: str) -> None:
@@ -69,6 +73,7 @@ class Extractor:
             if not self.verbose and i % 200 == 0:
                 print(f"  {i}/{len(files)} archivos...", flush=True)
         self.flush_2d()
+        self.flush_raw()
         summary = {
             "rom": {"title": self.rom.header["title"], "gamecode": self.rom.header["gamecode"]},
             "files_in_rom": len(files),
@@ -122,6 +127,8 @@ class Extractor:
                 note = "  (contenedor: se desempaqueta)"
             elif k == "bin":
                 note = "  (formato desconocido)"
+            elif row["converted"] and k not in MAGICS.values():
+                note = "  (formato propio o en crudo: ver notas)"
             elif row["pending"] and not row["converted"]:
                 note = "  (sin conversor todavía)"
             lines.append(f"  {k:8} {row['total']:7} {row['converted']:12} {row['pending']:14} {row['errors']:8}{note}")
@@ -135,6 +142,13 @@ class Extractor:
             lines += ["", "Desconocidos agrupados (posibles formatos propios del juego):"]
             for key, n, ex in unk[:30]:
                 lines.append(f"  {n:5}  {key}  p. ej. {ex}")
+        sg = self.structure_groups()
+        if sg:
+            lines += ["", "Formatos por bloques (estructura más común; detalle en converted/<archivo>.json):"]
+            for k, n, top in sg:
+                lines.append(f"  {k} ({n}):")
+                for sig, m in top:
+                    lines.append(f"    {m:5}  {sig[:110]}")
         lines.append("")
         lines.append(f"Errores: {s['errors']}")
         for e in self.errors[:200]:
@@ -182,6 +196,8 @@ class Extractor:
                 kind = identify(data)
             except (ValueError, IndexError):
                 pass
+        if kind == "bin":
+            kind = self.classify_bin(path, data)
         entry["type"] = kind
         if kind == "bin":
             entry["head"] = "".join(chr(b) if 32 <= b < 127 else "." for b in data[:4]) + f" ({data[:4].hex()})"
@@ -214,8 +230,30 @@ class Extractor:
             self.errors.append({"path": path, "type": kind, "error": err})
             self.log(traceback.format_exc())
 
+    @staticmethod
+    def classify_bin(path: str, data: bytes) -> str:
+        """Tipo de un archivo sin cabecera Nitro: en crudo por extensión, o formato por bloques."""
+        ext = Path(path).suffix.lower()
+        if ext in G.RAW_2D or ext in G.RAW_TEX:
+            return ext[1:]
+        if G.looks_chunked(data):
+            return ext[1:] if ext and ext != ".bin" else "bloques"
+        return "bin"
+
     def convert_one(self, path: str, kind: str, data: bytes) -> list[str]:
         conv = self.out / "converted" / path
+        if f".{kind}" in G.RAW_2D or f".{kind}" in G.RAW_TEX:
+            group = "2d" if f".{kind}" in G.RAW_2D else "tex"
+            self.pending_raw.setdefault((group, conv.parent), {})[Path(path).name] = data
+            self.entries_raw[(conv.parent, Path(path).name)] = self.manifest[-1]
+            return []
+        if kind not in MAGICS.values() and kind not in ("bin", "code") and G.looks_chunked(data):
+            info = G.parse_chunks(data)
+            self.manifest[-1]["structure"] = G.chunk_signature(info)
+            conv.parent.mkdir(parents=True, exist_ok=True)
+            dest = conv.with_name(conv.name + ".json")
+            dest.write_text(json.dumps(info, indent=1, ensure_ascii=False), encoding="utf-8")
+            return [self.rel(dest)]
         if kind in ("nsbtx", "nsbmd"):
             made = F.convert_tex0(data, conv)
             if kind == "nsbmd":
@@ -307,6 +345,33 @@ class Extractor:
                 except Exception as e:  # noqa: BLE001
                     self.errors.append({"path": str(folder / base), "type": "nscr", "error": str(e)})
                     self.mark_2d(folder, base, "nscr", error=str(e))
+
+
+    def flush_raw(self) -> None:
+        """Convierte los grupos .nbf* (2D) y .ntf* (texturas) de cada carpeta."""
+        for (group, folder), items in self.pending_raw.items():
+            try:
+                res = (G.convert_raw_2d if group == "2d" else G.convert_raw_tex)(items, folder)
+            except Exception as e:  # noqa: BLE001
+                res = {n: ([], {"error": f"{type(e).__name__}: {e}"}) for n in items}
+            for name, (outs, notes) in res.items():
+                e = self.entries_raw.get((folder, name))
+                if e is None:
+                    continue
+                if "error" in notes:
+                    e["error"] = notes.pop("error")
+                    self.errors.append({"path": e["path"], "type": e["type"], "error": e["error"]})
+                e["outputs"] = [self.rel(o) for o in outs]
+                if notes:
+                    e["notes"] = notes
+
+    def structure_groups(self) -> list[tuple[str, int, list[tuple[str, int]]]]:
+        """Por tipo de formato por bloques: estructuras más comunes."""
+        by: dict[str, Counter] = {}
+        for e in self.manifest:
+            if "structure" in e:
+                by.setdefault(e["type"], Counter())[e["structure"]] += 1
+        return sorted(((k, sum(c.values()), c.most_common(3)) for k, c in by.items()), key=lambda x: -x[1])
 
 
 def _common_prefix(a: str, b: str) -> str:

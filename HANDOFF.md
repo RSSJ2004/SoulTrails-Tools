@@ -107,6 +107,18 @@ los `.c` que cambian (compilación incremental y evita el `PermissionError` de W
 abiertos) y `/nodeReuse:false` en MSBuild. Ojo: la copia local del usuario era un zip antiguo
 (compilaba en Debug y no escribía `recomp_warnings.txt`): que actualice antes de seguir.
 
+**`stk recomp --opt fast|medium|release`** (`port/CMakeLists.txt`, `ST_OPT`): la primera compilación
+`/O2` con MSVC tardaba >10 min; `--learn` usa `fast` (`/Od`) por defecto. Con la copia actualizada el
+recomp dio 31956 funciones (antes 57564 con el zip viejo: probablemente falsos positivos que ya filtra
+la regla de prólogo) y 2 "no soportadas" que son texto ASCII ("Titl", "vill"): falta filtrar
+candidatos que contienen cadenas.
+
+**Assets propios (`sttools/gamefmt.py`, `tests/test_gamefmt.py`)**: `.nbf*` → PNG (bpp deducido por
+la pantalla y la paleta), `.ntf*` → PNG (formato/tamaño supuestos: `notes` en el manifiesto), y
+cualquier archivo con magia de 4 mayúsculas → JSON de bloques (`parse_chunks`: cadena
+etiqueta+tamaño, con o sin cabecera incluida, anidada; registros y cadenas) y resumen de estructuras
+en `report.txt`. Pendiente: ver con la ROM real qué sale y escribir parsers semánticos (ZOLB, BPAM...).
+
 **`report.txt` real, desconocidos (9692)**: `.zob` ZOLB 6476 (listas de objetos por mapa),
 `.zcb` BLCM 345, `.zmb` BPAM 305, `.zbcd` DCBZ 181, `.zab` ZCAB 94, `.ztb` BRTM 17 (formatos de mapa
 del juego con magia de 4 letras invertida, por bloques); `.bncl/.bnbl/.bnll` JNCL/JNBL/JNLL 812

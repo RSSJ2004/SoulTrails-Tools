@@ -46,6 +46,9 @@ assets/report.txt    resumen y lista de errores
 | BMG | JSON con todos los mensajes (códigos de control como `{hex}`) |
 | SDAT | SSEQ/SBNK/SWAR/STRM con su nombre real |
 | SWAR / SWAV / STRM | WAV (PCM8, PCM16, IMA-ADPCM) |
+| `.nbfp` / `.nbfc` / `.nbfs` (2D en crudo, sin cabecera) | paleta, hoja de tiles y pantalla en PNG; los bpp se deducen (`notes` en el manifiesto) |
+| `.ntft` / `.ntfp` / `.ntfi` (texturas en crudo) | PNG con formato y tamaño **supuestos** (anotados en `notes`) |
+| Formatos por bloques del juego (`.zob`, `.zmb`, `.zcb`, `.bncl`...) | JSON con la estructura: bloques, tamaños, registros probables y cadenas; resumen en `report.txt` |
 | NSBMD (geometría), NSBCA/NSBTA (animación), SSEQ (música) | se guardan desempaquetados; los conversores a glTF/MIDI vienen después |
 
 Si `report.txt` muestra errores, pásamelos: cada uno lleva el archivo y la causa.
@@ -59,6 +62,10 @@ python stk.py recomp --compile
 
 Genera `build/recomp/*.c` (código traducido de **tu** ROM, no se sube), comprueba que compila y
 crea el ejecutable `soultrails_port`, que **lee tu ROM al arrancar**:
+
+Optimización (`--opt`): `fast` compila mucho antes (sin optimizar; es la de por defecto con `--learn`),
+`medium`, o `release` (`/O2`, la de por defecto con `--compile`; la primera vez con MSVC puede tardar
+mucho). Cada nivel usa su carpeta (`build/recomp-build-fast`...), así que alternar no recompila todo.
 
 ```bash
 build/recomp-build/soultrails_port --rom /ruta/a/tu_rom.nds --misses .stk/recomp_misses.txt
