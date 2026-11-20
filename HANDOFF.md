@@ -107,6 +107,14 @@ cargados** en cada parada (`st_overlay_present`: firmas de 8 funciones) y `stk -
 solo la última función, la de LR y la instrucción no soportada en el overlay cargado
 (`.stk/last_disasm.txt`).
 
+**Causa del salto a 020C2CC0** (desensamblado automático + overlays cargados: ov000 ov001 ov025 ov031
+ov058 ov088 ov101): el código en 020B792A (`blx 0x020C0F24`) no era ov001 sino otro overlay de la
+zona 020B0000 (ov001-ov016 comparten funciones idénticas: la misma biblioteca). El despachador
+elegía el primer overlay cuya firma de 32 bytes coincidía (ov001) y sus llamadas directas iban a
+"funciones" de datos de ov001. Ahora, si coinciden varios, gana el de mayor `overlay_score`
+(firmas de 16 funciones en memoria) — `tests/test_hw.py::Lookup`. Y una llamada a una función con
+instrucciones indefinidas pasa por el despachador en vez de ser directa.
+
 ## Decisiones de diseño
 1. **El port lee la ROM del usuario en tiempo de ejecución** (`soultrails_port --rom juego.nds`),
    como N64Recomp: no se empaqueta nada del juego en el ejecutable salvo el código traducido

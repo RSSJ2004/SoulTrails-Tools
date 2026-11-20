@@ -224,27 +224,39 @@ uint32_t st_signature(uint32_t addr, uint32_t end) {
     return h;
 }
 
+/* Cuántas de hasta 16 funciones repartidas por el overlay coinciden con la memoria */
+static unsigned overlay_score(const StModule* m) {
+    unsigned step = m->count > 16 ? m->count / 16 : 1, n = 0, ok = 0;
+    for (unsigned i = 0; i < m->count && n < 16; i += step, n++)
+        if (st_signature(m->fns[i].addr, m->end) == m->fns[i].sig) ok++;
+    return n ? ok * 64 / n : 0;
+}
+
 /* Resuelve una dirección a una función traducida. Los módulos residentes (estático, ITCM)
  * ganan; entre overlays, primero el marcado a mano con st_overlay_set_loaded y si no el que
- * coincide con la memoria (ver HANDOFF.md, "Decisiones de diseño"). */
+ * coincide con la memoria (ver HANDOFF.md, "Decisiones de diseño"). Varios overlays de la
+ * misma zona comparten funciones idénticas (la misma biblioteca en cada escena): si coinciden
+ * varios, gana el que más funciones tiene en memoria (con la ROM, elegir el primero llevaba a
+ * llamadas directas pensadas para otro overlay). */
 static const StFnEntry* lookup(uint32_t addr, int thumb, const StModule** mod) {
-    const StFnEntry* by_sig = NULL;
-    const StModule* sig_mod = NULL;
-    uint32_t mem_sig = 0;
-    int have_sig = 0;
+    const StFnEntry* best = NULL;
+    const StModule* best_mod = NULL;
+    unsigned best_score = 0, matches = 0;
     for (unsigned i = 0; i < st_module_count; i++) {
         const StModule* m = &st_modules[i];
         if (addr < m->start || addr >= m->end) continue;
         const StFnEntry* e = find_in(m, addr, thumb);
         if (!e) continue;
         if (m->overlay < 0 || st_overlay_is_loaded(m->overlay)) { if (mod) *mod = m; return e; }
-        if (by_sig) continue;
-        if (!have_sig) { mem_sig = st_signature(addr, m->end); have_sig = 1; }
-        if (e->sig == mem_sig) { by_sig = e; sig_mod = m; }
-        else have_sig = 0;   /* otro overlay puede acabar en otro sitio: recalcular */
+        if (st_signature(addr, m->end) != e->sig) continue;
+        matches++;
+        if (matches == 1) { best = e; best_mod = m; continue; }
+        if (matches == 2) best_score = overlay_score(best_mod);
+        unsigned sc = overlay_score(m);
+        if (sc > best_score) { best = e; best_mod = m; best_score = sc; }
     }
-    if (by_sig && mod) *mod = sig_mod;
-    return by_sig;
+    if (best && mod) *mod = best_mod;
+    return best;
 }
 
 void st_set_miss_log(const char* path) {

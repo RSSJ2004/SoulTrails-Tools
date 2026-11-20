@@ -26,3 +26,16 @@ class Hw(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(CC, "necesita un compilador de C")
+class Lookup(unittest.TestCase):
+    def test_overlay_disambiguation(self):
+        with tempfile.TemporaryDirectory() as d:
+            exe = Path(d) / "lk"
+            src = [ROOT / "tests" / "hw" / "lookup_test.c", *sorted((ROOT / "runtime").glob("*.c"))]
+            r = subprocess.run([CC, "-O1", "-I", str(ROOT / "runtime"), *map(str, src), "-o", str(exe)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            r = subprocess.run([str(exe)], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

@@ -63,6 +63,8 @@ class Generator:
         g = self.prog.find_function(f.module, target)
         if g is None or g.thumb != bool(target & 1):
             return None
+        if any(i.kind == UNDEF for i in g.insns.values()):
+            return None  # no parece código de este módulo (p. ej. datos): que decida el despachador
         if g.module.overlay is not None and g.module is not f.module:
             return None  # otro overlay: depende de qué esté cargado
         return g.cname
