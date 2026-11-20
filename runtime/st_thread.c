@@ -40,6 +40,7 @@ typedef struct Fiber {
     uint32_t sp;          /* SP del hilo invitado mientras está suspendido */
     uint32_t start_pc;    /* fibra nueva: dónde empieza el hilo */
     uint32_t resume_pc;   /* reanudación tras retorno de excepción: a dónde vuelve */
+    void (*entry)(void);  /* fibra de arranque del invitado (modo con backend) */
 #ifdef _WIN32
     void* native;
 #else
@@ -75,6 +76,11 @@ int st_thread_take_prev_sp(uint32_t* sp) {
 
 static void thread_main(int i) {
     StCpu* c = g_cpu;
+    if (fibers[i].entry) {
+        fibers[i].entry();
+        st_platform.halt(c, "el arranque del juego volvió");
+        return;
+    }
     uint32_t pc = fibers[i].start_pc;
     for (;;) {   /* si la función del hilo vuelve, sigue donde diga su LR (p. ej. OS_ExitThread) */
         st_call(c, pc);
@@ -181,3 +187,25 @@ int st_thread_switch(StCpu* c, uint32_t target_pc, uint32_t target_sp, uint32_t 
 }
 
 uint32_t st_thread_resume_pc(void) { return cur >= 0 ? fibers[cur].resume_pc : 0; }
+
+/* Modo con backend (melonDS): la fibra 0 es el planificador de la consola; el juego corre en
+ * fibras invitadas y cede el turno con st_fiber_yield_host cuando agota sus ciclos. */
+static int guest_cur = -1;
+
+int st_fiber_guest_start(StCpu* c, void (*entry)(void)) {
+    g_cpu = c;
+    if (!ensure_main()) return 0;
+    int i = new_fiber(0);
+    if (i < 0) return 0;
+    fibers[i].entry = entry;
+    guest_cur = i;
+    return 1;
+}
+void st_fiber_run_guest(void) {
+    if (guest_cur > 0 && cur == 0) switch_native(guest_cur);
+}
+void st_fiber_yield_host(void) {
+    if (cur <= 0) return;   /* ya en el planificador */
+    guest_cur = cur;
+    switch_native(0);
+}

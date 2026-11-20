@@ -207,6 +207,17 @@ def cmd_doctor(a) -> None:
     print("Herramientas:")
     check("Python >= 3.10", sys.version_info >= (3, 10), "actualiza Python")
     check("ninja", shutil.which("ninja"), "instala Ninja")
+    if os.name == "nt":
+        vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+        has_clang = False
+        if vswhere.exists():
+            r = subprocess.run([str(vswhere), "-latest", "-products", "*", "-requires",
+                                "Microsoft.VisualStudio.Component.VC.Llvm.Clang", "-property", "installationPath"],
+                               capture_output=True, text=True)
+            has_clang = bool(r.stdout.strip())
+        check("clang-cl de Visual Studio (port híbrido --melonds)", has_clang or shutil.which("clang-cl"),
+              "Visual Studio Installer > Modificar > Componentes individuales > 'Compilador C++ de Clang para "
+              "Windows' y 'Conjunto de herramientas de MSBuild para LLVM (clang-cl)'")
     check("cmake (recomp --compile/--learn, frontend)", shutil.which("cmake"),
           "Windows: winget install Kitware.CMake  (o https://cmake.org/download/)")
     cc = c_compiler()
@@ -396,7 +407,7 @@ def c_compiler() -> str | None:
     return None
 
 
-def port_build(out: Path, opt: str = "release") -> Path:
+def port_build(out: Path, opt: str = "release", melon: bool = False) -> Path:
     if not shutil.which("cmake"):
         sys.exit("Falta CMake para compilar el código recompilado.\n"
                  "  Windows: winget install Kitware.CMake  (o https://cmake.org/download/, marca 'añadir al PATH')\n"
@@ -407,11 +418,22 @@ def port_build(out: Path, opt: str = "release") -> Path:
         sys.exit("Falta un compilador de C. Windows: Visual Studio Build Tools con 'Desarrollo para el escritorio con C++' "
                  "(winget install Microsoft.VisualStudio.2022.BuildTools) o MinGW-w64. Comprueba con: python stk.py doctor")
     # Una carpeta por nivel: cambiar de nivel no obliga a recompilarlo todo
-    bdir = out.parent / ("recomp-build" if opt == "release" else f"recomp-build-{opt}")
+    bdir = out.parent / (("recomp-build-melon" if melon else "recomp-build") + ("" if opt == "release" else f"-{opt}"))
     # Ninja solo si hay un compilador en el PATH; en Windows sin él, CMake elige Visual Studio
     use_ninja = shutil.which("ninja") and cc != "Visual Studio"
-    gen = ["-G", "Ninja"] if use_ninja and not (bdir / "CMakeCache.txt").exists() else []
-    run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", f"-DST_OPT={opt}", "-DCMAKE_BUILD_TYPE=Release", *gen])
+    fresh = not (bdir / "CMakeCache.txt").exists()
+    gen = ["-G", "Ninja"] if use_ninja and fresh else []
+    extra = []
+    if melon:
+        # Port híbrido: melonDS (GPL-3.0) pone ARM7, sonido, guardado, cartucho y gráficos.
+        # No compila con MSVC: con Visual Studio se usa clang-cl (componente "Clang" de las Build Tools).
+        extra.append("-DST_MELONDS=ON")
+        if os.environ.get("ST_MELONDS_SOURCE"):
+            extra.append(f"-DST_MELONDS_SOURCE={os.environ['ST_MELONDS_SOURCE']}")
+        if cc == "Visual Studio" and fresh:
+            extra += ["-T", "ClangCL"]
+    run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", f"-DST_OPT={opt}",
+         "-DCMAKE_BUILD_TYPE=Release", *gen, *extra])
     build = ["cmake", "--build", bdir, "--parallel", "--config", "Release"]
     cache = bdir / "CMakeCache.txt"
     if cache.exists() and "CMAKE_GENERATOR:INTERNAL=Visual Studio" in cache.read_text(encoding="utf-8", errors="replace"):
@@ -449,7 +471,7 @@ def cmd_recomp(a) -> None:
     print(f"El runtime registra direcciones desconocidas en {MISSES}; vuelve a ejecutar `stk recomp` para incluirlas.")
     exe = None
     if a.compile or a.learn:
-        exe = port_build(out, a.opt)
+        exe = port_build(out, a.opt, a.melonds)
         print(f"El código recompilado compila correctamente ({exe.parent}).")
         print(f"Ejecutable: {exe} --rom {cfg['rom']} --misses {MISSES}")
     learned = 0
@@ -458,6 +480,10 @@ def cmd_recomp(a) -> None:
             before = set(miss_lines())
             cmd = [str(exe), "--rom", cfg["rom"], "--misses", str(MISSES), "--max-frames", str(a.max_frames),
                    "--watchdog", str(max(5, a.timeout - 10))]
+            if a.melonds:
+                saves = HOME / "saves"
+                saves.mkdir(exist_ok=True)
+                cmd += ["--save", str(saves / f"{(rom.header.get('gamecode') or 'juego').strip()}.sav")]
             for spec in a.dump_mem:
                 cmd += ["--dump-mem", spec]
             if a.dump_frames:
@@ -494,7 +520,7 @@ def cmd_recomp(a) -> None:
             learned += len(new)
             print(f"[learn {it}] aprendido: {', '.join(new)}")
             res = recomp_once(a, cfg, rom, out)
-            port_build(out, a.opt)
+            port_build(out, a.opt, a.melonds)
         else:
             print(f"[learn] se alcanzó --max-iter {a.max_iter}")
         print(f"Aprendizaje: {learned} direcciones nuevas, {res['functions']} funciones")
@@ -901,6 +927,8 @@ def main() -> None:
     s.add_argument("--max-iter", type=int, default=50, help="máximo de vueltas de --learn")
     s.add_argument("--max-frames", type=int, default=600, help="cuadros que se deja correr el port en cada vuelta")
     s.add_argument("--timeout", type=int, default=120, help="segundos máximos por ejecución del port")
+    s.add_argument("--melonds", action="store_true",
+                   help="port híbrido: ARM7, sonido, guardado y gráficos con melonDS (GPL-3.0; en Windows, clang-cl)")
     s.add_argument("--dump-mem", action="append", default=[],
                    help="con --learn, vuelca memoria del juego al terminar: DIR:LEN en hex (repetible)")
     s.add_argument("--dump-frames", type=int, default=60,

@@ -66,6 +66,31 @@ tests/                 learn/ (prog.c para --learn), bios/ (bios.c, bios_thumb.c
 `rom`, `assets`, `recomp [--compile --learn --max-frames N --hook ADDR --seeds F --scan-thumb]`,
 `ghidra import|export|open`, `build`, `progress`, `next`, `loop`, `status`, `journal`, `task`.
 
+## Investigación de otros ports de DS (2026-11) y decisión: híbrido con melonDS
+- *Phantom Hourglass* (dguillot-gh/phantom-hourglass-recomp, GPL-3.0, motor FFCCEOT-Recomp): recompila
+  el ARM9 y los overlays y **usa melonDS para todo lo demás** (ARM7, timers, DMA, IRQ, cartucho,
+  2D/3D con OpenGL 2-8x, panorámico con un gancho en `G3i_PerspectiveW_`). Hilos en fibras;
+  OS_SaveContext/LoadContext/IrqHandler localizados por patrón de instrucciones.
+- *Jump Super Stars* y *Dragon Quest IX* (DQ9-Remastered, MIT): recompilan también el ARM7 y
+  reimplementan el hardware; DQ9 usa presupuesto de ciclos en entradas de función y cabeceras de
+  bucle (`dsr_checkpoint`: entrega IRQ o cede la fibra) y un planificador por líneas a 33,51 MHz.
+- *Pokémon Black*: intérprete de respaldo para lo que el análisis estático no encuentra.
+- El usuario eligió el **híbrido por fases**: melonDS ahora para llegar a jugable y sustituirlo pieza a
+  pieza más adelante. El repositorio pasa a GPL-3.0 (`LICENSE`, `NOTICE.md`).
+
+**Implementado (`stk recomp --melonds`)**: `port/melon/st_melon.cpp` (consola melonDS con ROM y `.sav`,
+arranque directo, backend `StBackend`: memoria directa para TCM y RAM principal, el resto por
+`ARM9Read/Write`; CP15 de melonDS, `0x704/0x782` = esperar IRQ; IRQ desde `IME/IE/IF` de melonDS;
+`checkpoint` suma `used*24` ciclos a `ARM9Timestamp` y cede la fibra al llegar a `ARM9Target`),
+`melon_platform.cpp` (Platform.h: archivos, hilos, guardado atómico), `patch_melonds.cmake`
+(`ARM9ExternalExecute` en `ARMv5::Execute`). Runtime: `StBackend`, `st_budget`/`st_checkpoint` en
+`ST_TRACE`/`ST_POLL`, fibras host/invitado (`st_fiber_guest_start/run_guest/yield_host`).
+Prueba `tests/test_pipeline.py::Melon` (necesita `ST_MELONDS_SOURCE` con melonDS 1.0): 300 cuadros
+= 300 IRQ de VBlank de la GPU de melonDS atendidas por el ARM9 recompilado con VBlankIntrWait.
+Lección: el arranque (y melonDS) machaca los primeros 2 KB del ARM9 (área segura) con E7FFDEFF;
+el código de prueba va en 0x02000800. Pendiente: probar en Windows con clang-cl y la ROM real,
+ventana SDL con las pantallas/sonido/entrada de melonDS, renderizador OpenGL.
+
 ## Decisiones de diseño
 1. **El port lee la ROM del usuario en tiempo de ejecución** (`soultrails_port --rom juego.nds`),
    como N64Recomp: no se empaqueta nada del juego en el ejecutable salvo el código traducido

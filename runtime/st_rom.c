@@ -124,12 +124,25 @@ static void boot_system_area(const StRom* rom) {
 }
 
 uint32_t st_boot_prepare(StCpu* c, const StRom* rom) {
-    st_init(c);
-    st_hw_set_cart(rom->data, rom->size, st_boot_chip_id(rom));
-    boot_system_area(rom);
-    /* El cargador del cartucho copia la cabecera y el ARM9 (sin descomprimir) */
-    st_load(ST_HEADER_RAM, rom->data, 0x170);
-    st_load(rom->arm9_ram, rom->data + rom->arm9_off, rom->arm9_size);
+    if (!st_backend) {   /* con melonDS, su arranque directo ya carga todo esto */
+        st_init(c);
+        st_hw_set_cart(rom->data, rom->size, st_boot_chip_id(rom));
+        boot_system_area(rom);
+        /* El cargador del cartucho copia la cabecera y el ARM9 (sin descomprimir) */
+        st_load(ST_HEADER_RAM, rom->data, 0x170);
+        st_load(rom->arm9_ram, rom->data + rom->arm9_off, rom->arm9_size);
+    } else {
+        /* Pilas que deja el arranque directo de melonDS (WRAM compartida); el crt0 pone las suyas */
+        memset(c, 0, sizeof *c);
+        c->cpsr_ctrl = 0xDF;
+        st_set_mode(c, 0x12); c->r[13] = 0x03003F80u;
+        st_set_mode(c, 0x13); c->r[13] = 0x03003FC0u;
+        st_set_mode(c, 0x1F); c->r[13] = 0x03002F7Cu;
+        st_set_mode(c, 0x13);
+        c->cpsr_ctrl = 0xD3;
+        c->r[14] = ST_BOOT_RETURN;
+        return rom->arm9_entry;
+    }
     /* Estado del BIOS del ARM9 al saltar al juego (GBATEK): SVC con IRQ/FIQ desactivadas y
      * pilas en la DTCM por defecto. El crt0 del juego las vuelve a poner. */
     st_set_mode(c, 0x12); c->r[13] = 0x00803FA0u;

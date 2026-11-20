@@ -251,8 +251,9 @@ def swar(waves: list[tuple[int, int, bytes]]) -> bytes:
 
 # ----------------------------------------------------------------------- ROM
 def rom(files: dict[str, bytes], arm9: bytes = b"\0" * 16, arm9_ram: int = 0x02000000,
-        overlays: list[tuple[int, bytes, bool]] = ()) -> bytes:
-    """ROM mínima con NitroFS de un solo directorio + overlays."""
+        overlays: list[tuple[int, bytes, bool]] = (), arm7: bytes | None = None,
+        arm7_ram: int = 0x02380000, arm9_entry: int | None = None) -> bytes:
+    """ROM mínima con NitroFS de un solo directorio + overlays (y binario ARM7 si se da)."""
     names = list(files)
     blobs = [files[n] for n in names] + [o[1] for o in overlays]
     out = bytearray(0x4000)
@@ -260,7 +261,13 @@ def rom(files: dict[str, bytes], arm9: bytes = b"\0" * 16, arm9_ram: int = 0x020
     out[12:16] = b"TEST"
     arm9_off = 0x4000
     out += arm9 + b"\0" * ((-len(arm9)) % 4)
-    struct.pack_into("<IIII", out, 0x20, arm9_off, arm9_ram, arm9_ram, len(arm9))
+    struct.pack_into("<IIII", out, 0x20, arm9_off, arm9_ram if arm9_entry is None else arm9_entry, arm9_ram, len(arm9))
+    if arm7 is not None:
+        while len(out) % 0x200:
+            out += b"\0"
+        arm7_off = len(out)
+        out += arm7 + b"\0" * ((-len(arm7)) % 4)
+        struct.pack_into("<IIII", out, 0x30, arm7_off, arm7_ram, arm7_ram, len(arm7))
     # FNT: directorio raíz con ficheros
     sub = b"".join(bytes([len(n)]) + n.encode() for n in names) + b"\0"
     fnt = struct.pack("<IHH", 8, len(overlays), 1) + sub

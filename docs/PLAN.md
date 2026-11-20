@@ -38,6 +38,15 @@ específicas del ARM7 por tag (táctil, sonido, energía), copia de seguridad.
 
 **Hecho cuando**: `--learn` llega a cientos de cuadros sin fallos y el juego espera input.
 
+## Cambio de rumbo (2026-11): híbrido con melonDS
+Tras estudiar los ports de *Phantom Hourglass* (mismo motor), *Dragon Quest IX*, *Jump Super Stars* y
+*Pokémon Black*, las fases 1.3 (ARM7), 2 (imagen) y 3 (sonido y guardado) se cubren con **melonDS** como
+backend (`stk recomp --melonds`): ARM7 con su código real, SPU, chip de guardado, cartucho, 2D y 3D
+(software; OpenGL 2-8x y panorámico después). Lo propio que queda: el recompilador, las fibras, la
+HLE del BIOS, el frontend (ventana, controles, Link con la palanca) y las mejoras. melonDS se irá
+sustituyendo por piezas propias cuando convenga. El hardware simplificado propio (st_hw, st_dev,
+st_vram, st_gpu2d, st_arm7) sigue para el modo sin melonDS y las pruebas.
+
 ## Fase 2 — Imagen
 Estado (2026-11): bancos de VRAM y 2D por software (cuadro entero, sin ventanas ni mosaico) con
 capturas BMP; exportaciones de GPU dedicada. Pendiente: por línea, ventanas, 3D, ventana SDL.

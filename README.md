@@ -100,6 +100,25 @@ Validación (`tests/test_recomp.py`): se compila C real para ARM946E-S (ARM + Th
 tablas de saltos, punteros a función, aritmética de 64 bits, coma flotante por software de libgcc),
 se recompila y se compara con el mismo código nativo en -O0, -O2 y -Os.
 
+## 3b. Port híbrido con melonDS (`--melonds`)
+
+```bash
+python stk.py recomp --learn --melonds
+```
+
+El ARM9 del juego es el código recompilado; **melonDS** pone todo lo demás: el ARM7 con su código
+real (sonido, táctil, RTC, energía, cartucho y chip de guardado), timers, DMA y los motores 2D/3D.
+Es el mismo enfoque que el port de *Phantom Hourglass* (mismo motor que Spirit Tracks).
+
+- melonDS 1.0 se descarga al compilar y se le aplica un parche de 2 líneas (`port/melon/patch_melonds.cmake`):
+  en el turno del ARM9, `NDS::RunFrame` cede la ejecución al código recompilado, que corre en fibras
+  y devuelve el turno al agotar su presupuesto de ciclos (`st_checkpoint`).
+- La partida se guarda en `saves/<código>.sav` con escritura atómica (archivo temporal + renombrar).
+- **Windows**: melonDS no compila con MSVC; hace falta **clang-cl** (Visual Studio Installer →
+  Modificar → Componentes individuales → "Compilador C++ de Clang para Windows" y "Conjunto de
+  herramientas de MSBuild para LLVM (clang-cl)"). `stk doctor` lo comprueba y `stk` usa `-T ClangCL`.
+- Licencia: con melonDS el port es GPL-3.0 (ver `LICENSE` y `NOTICE.md`).
+
 ## 4. Frontend: pantallas y controles
 
 ```bash

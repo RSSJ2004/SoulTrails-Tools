@@ -14,6 +14,9 @@
 #include <string.h>
 
 #include "st_rom.h"
+#ifdef ST_MELONDS
+#include "melon/st_melon.h"
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -56,7 +59,12 @@ static void write_bmp(const char* path, const uint32_t* top, const uint32_t* bot
 static void dump_frame(void) {
     static uint32_t top[256 * 192], bottom[256 * 192];
     char path[512];
+#ifdef ST_MELONDS
+    memcpy(top, st_melon_screen(0), sizeof top);
+    memcpy(bottom, st_melon_screen(1), sizeof bottom);
+#else
     st_gpu2d_frame(top, bottom);
+#endif
     snprintf(path, sizeof path, "%s/frame_%05lu.bmp", dump_dir, frames);
     write_bmp(path, top, bottom);
 }
@@ -233,9 +241,35 @@ static void start_watchdog(void) {
 }
 #endif
 
+#ifdef ST_MELONDS
+/* Bucle del port híbrido: melonDS avanza la consola cuadro a cuadro y cede el turno del ARM9 al
+ * código recompilado (port/melon/st_melon.cpp) */
+static int run_melon(StRom* rom, const char* rom_path, const char* save_path) {
+    char err[160];
+    if (st_melon_open(&cpu, rom, rom_path, save_path, st_boot_language, err, sizeof err)) {
+        fprintf(stderr, "[port] melonDS: %s\n", err);
+        return 2;
+    }
+    printf("[port] melonDS: ARM7, sonido, cartucho, guardado (%s) y gráficos\n", save_path ? save_path : "sin .sav");
+    for (;;) {
+        st_melon_run_frame();
+        frames++;
+        hot_sample();
+        if (dump_every && frames % dump_every == 0) dump_frame();
+        if (max_frames && frames >= max_frames) {
+            hot_report();
+            printf("[port] %lu cuadros sin fallos\n", frames);
+            st_melon_close();
+            return 0;
+        }
+    }
+}
+#endif
+
 int main(int argc, char** argv) {
     const char* rom_path = NULL;
     const char* misses = NULL;
+    const char* save_path = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom_path = argv[++i];
         else if (!strcmp(argv[i], "--misses") && i + 1 < argc) misses = argv[++i];
@@ -254,7 +288,8 @@ int main(int argc, char** argv) {
             for (int k = 0; k < 6; k++) if (!strcmp(l, langs[k])) st_boot_language = k;
         }
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) watchdog_secs = (unsigned)strtoul(argv[++i], NULL, 10);
-        else { fprintf(stderr, "uso: %s --rom juego.nds [--misses archivo] [--max-frames N] [--watchdog S] [--lang es|en|fr|de|it|ja] [--dump-frames N] [--frames-dir D]\n", argv[0]); return 2; }
+        else if (!strcmp(argv[i], "--save") && i + 1 < argc) save_path = argv[++i];
+        else { fprintf(stderr, "uso: %s --rom juego.nds [--misses archivo] [--max-frames N] [--watchdog S] [--lang es|en|fr|de|it|ja] [--dump-frames N] [--frames-dir D] [--save partida.sav]\n", argv[0]); return 2; }
     }
     if (!rom_path) { fprintf(stderr, "falta --rom\n"); return 2; }
     StRom rom;
@@ -268,6 +303,15 @@ int main(int argc, char** argv) {
     st_platform.halt = on_halt;
     st_platform.idle = on_idle;
     if (watchdog_secs) start_watchdog();
+#ifdef ST_MELONDS
+    {
+        int rc = run_melon(&rom, rom_path, save_path);
+        st_rom_close(&rom);
+        return rc;
+    }
+#else
+    (void)save_path;
+#endif
     st_boot_run(&cpu, &rom);
     printf("[port] el crt0 volvió a %08X\n", cpu.next_pc);
     if (cpu.next_pc != ST_BOOT_RETURN) {   /* volvió a otro sitio: el flujo se perdió por el camino */

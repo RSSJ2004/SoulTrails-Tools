@@ -197,3 +197,34 @@ class Threads(unittest.TestCase):
             sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
             out = sh(*stk, "recomp", "--learn", "--timeout", "30", env=env)
             self.assertIn("terminó sin fallos", out, out)
+
+
+MELON_SRC = os.environ.get("ST_MELONDS_SOURCE")
+
+
+@unittest.skipUnless(ARMCC and shutil.which("cmake") and shutil.which("c++") and MELON_SRC,
+                     "falta arm-none-eabi-gcc, cmake, c++ o ST_MELONDS_SOURCE (copia local de melonDS 1.0)")
+class Melon(unittest.TestCase):
+    def test_vblank_irq_with_melonds(self):
+        """Port híbrido: ARM9 recompilado + melonDS (ARM7, VBlank por la GPU, IRQ, IntrWait)."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            # El cargador (y melonDS) machaca los primeros 2 KB del ARM9 (área segura): el código va después
+            sh(ARMCC, "-mcpu=arm946e-s", "-nostdlib", "-Ttext=0x02000800", "-e", "_start",
+               ROOT / "tests" / "melon" / "vblank.S", "-o", d / "v.elf")
+            sh("arm-none-eabi-objcopy", "-O", "binary", d / "v.elf", d / "v.bin")
+            counter = next(int(l.split()[0], 16) for l in sh("arm-none-eabi-nm", d / "v.elf").splitlines()
+                           if l.endswith(" counter"))
+            arm7 = struct.pack("<I", 0xEAFFFFFE)   # b .
+            rom = B.rom({}, arm9=bytes(0x800) + (d / "v.bin").read_bytes() + bytes(64), arm7=arm7 + bytes(60),
+                        arm9_entry=0x02000800)
+            (d / "game.nds").write_bytes(rom)
+            env = dict(os.environ, STK_HOME=str(d / "work"))
+            stk = [sys.executable, ROOT / "stk.py"]
+            sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
+            out = sh(*stk, "recomp", "--learn", "--melonds", "--max-frames", "30", "--timeout", "120",
+                     "--dump-mem", f"{counter:08X}:4", env=env)
+            self.assertIn("terminó sin fallos", out, out)
+            m = __import__("re").search(rf"{counter:08X}: ([0-9A-F]{{8}})", out)
+            self.assertIsNotNone(m, out)
+            self.assertTrue(25 <= int(m.group(1), 16) <= 40, out)   # ~1 por cuadro (30 cuadros)

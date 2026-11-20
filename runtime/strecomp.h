@@ -112,6 +112,9 @@ extern volatile int st_fiber_resumed;
 extern unsigned long st_thread_switches;
 int st_thread_switch(StCpu* c, uint32_t target_pc, uint32_t target_sp, uint32_t old_sp);
 uint32_t st_thread_resume_pc(void);
+int st_fiber_guest_start(StCpu* c, void (*entry)(void));   /* modo backend: fibra del juego */
+void st_fiber_run_guest(void);                              /* planificador -> juego */
+void st_fiber_yield_host(void);                             /* juego -> planificador */
 void st_thread_note_user_sp(uint32_t old_sp);
 void st_thread_note_saved_sp(uint32_t sp);
 void st_thread_forget_user_sp(void);
