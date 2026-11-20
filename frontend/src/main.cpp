@@ -17,6 +17,14 @@
 #include "input.h"
 #include "layout.h"
 
+#ifdef _WIN32
+// Portátiles con dos GPU: pedir la dedicada (NVIDIA Optimus / AMD PowerXpress)
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 namespace {
 
 // Interfaz que implementará el port.

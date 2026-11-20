@@ -30,13 +30,17 @@ de resolución interna en ese equipo, y que funcione también en la integrada.
    `ucontext`/hilos con testigo), con `OS_SaveContext`/`OS_LoadContext`/`OS_SwitchThread`
    sustituidos por `st_override` en las direcciones que da objdiff.
 
-Estado (2026-11): hechos IPCSYNC con eco, FIFO del PXI (registro de mensajes), VCOUNT/DISPSTAT,
+Estado (2026-11): hechos IPCSYNC con eco y cuenta atrás, FIFO del PXI con respuesta por tag
+(RTC con fecha del PC), marcas de tags del ARM7, IRQ en bucles, VCOUNT/DISPSTAT,
 cartucho B7/B8, DMA, timers, zona del firmware e IRQ fuera de las esperas. Pendiente: respuestas
 del ARM7 por tag del PXI, copia de seguridad (SPI) y fibras para los hilos.
 
 **Hecho cuando**: `--learn` llega a cientos de cuadros sin fallos y el juego espera input.
 
 ## Fase 2 — Imagen
+Estado (2026-11): bancos de VRAM y 2D por software (cuadro entero, sin ventanas ni mosaico) con
+capturas BMP; exportaciones de GPU dedicada. Pendiente: por línea, ventanas, 3D, ventana SDL.
+
 1. **2D por software, fiel** (fondos texto/affine/bitmap, OBJ, ventanas, blending, brillo,
    captura): por línea, usando VRAM/OAM/paleta del runtime. Sirve de referencia para todo lo demás.
 2. **3D**: intérprete de la FIFO del GX (`0x04000400+`, comandos de matrices, vértices, texturas,

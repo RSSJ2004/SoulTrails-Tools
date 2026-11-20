@@ -160,6 +160,14 @@ RTC escribe la fecha del PC en BCD en 27FFDE8h (dirección supuesta). Y **IRQ en
 atrás** (`ST_POLL` en bucles del código generado): una espera activa sobre un flag que pone un
 callback de IRQ no llama a nadie. Ranura GBA: lecturas a 0 sin avisos repetidos.
 
+**Fase 2 empezada (sin probar con la ROM)**: `runtime/st_vram.c` (bancos A-I con VRAMCNT: BG/OBJ
+de cada motor por páginas de 16 KB, LCDC, ranuras de texturas y paletas, paletas extendidas;
+`st_ptr` de 0x06 pasa por aquí) y `runtime/st_gpu2d.c` (motores 2D por software, cuadro entero:
+fondos de texto/afines/extendidos/bitmap, objetos normales/afines/bitmap, paletas extendidas,
+mezcla, brillo y brillo maestro; sin ventanas ni mosaico; BG0 3D transparente). El port guarda
+capturas BMP (`--dump-frames N --frames-dir D`); `stk recomp --learn` lo hace cada 60 cuadros en
+`.stk/frames`. El frontend exporta NvOptimusEnablement/AmdPowerXpress (fase 2.4).
+
 **Fase 1 de `docs/PLAN.md` (sin probar aún con la ROM)**:
 - `runtime/st_dev.c`: cartucho en modo de datos (B7 bloque con redirección <0x8000, B8 ID),
   DMA (inmediata, VBlank, cartucho una palabra por petición, FIFO 3D de golpe), timers con
