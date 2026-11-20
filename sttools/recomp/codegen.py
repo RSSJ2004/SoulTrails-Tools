@@ -95,7 +95,7 @@ class Generator:
         if has_indirect:
             out.append("    uint32_t jt;")
         if resume:
-            out.append("    uint32_t jr;")
+            out.append("    uint32_t jr, my_ret = c->r[14];   /* vuelta normal de esta función */")
         out.append(f"    ST_TRACE({h(f.addr | tbit)});")
         out.append(f"    goto {label(f.addr)};")
         for i, a in enumerate(addrs):
@@ -127,7 +127,10 @@ class Generator:
             out.append("    switch (jr) {")
             for a in resume:
                 out.append(f"    case {h(a | tbit)}: goto {label(a)};")
-            out.append("    default: ST_TAIL_DYN(jr);")
+            # Otra dirección (p. ej. el punto de reanudación dentro de SaveContext): se ejecuta y
+            # se vuelve a mirar a dónde quiere volver, hasta que sea un punto de esta función o
+            # su propia vuelta
+            out.append("    default: st_call(c, jr); jr = c->next_pc; if (jr == my_ret) return; goto st_resume;")
             out.append("    }")
         out.append("}")
         del uses_dispatch

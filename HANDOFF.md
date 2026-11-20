@@ -196,6 +196,14 @@ clave es la pila escrita en el último guardado de contexto (STM que incluye r4-
 `st_thread_note_saved_sp`). La prueba de hilos apila entre ambos y falla sin el arreglo. Ojo: las
 direcciones intermedias aprendidas en esas vueltas (p. ej. 02031C5C) quedan en recomp_misses.txt;
 no rompen nada (se traducen como funciones extra).
+Causa real del "hilo que terminó" (registro `[hilos]` + `stk disasm 02026E38 02027100`): en el SDK
+el PC guardado por SaveContext (`02027120`) apunta **dentro de SaveContext** (`02027164`, un
+`bx lr` que devuelve 1), no a la vuelta de la llamada. Al reanudar, `st_resume` no lo encontraba,
+lo ejecutaba con ST_TAIL_DYN y se subía un nivel por cada función, hasta la base de la fibra.
+Ahora cada función con llamadas guarda `my_ret = LR` al entrar y, ante una vuelta desconocida,
+ejecuta ese destino y vuelve a mirar a dónde quiere volver (bucle) hasta que sea un punto suyo o
+`my_ret`. La prueba `Threads` imita al SDK (planificador intermedio, reanudación dentro de
+SaveContext) y falla sin el arreglo. El port sale con 5 si el arranque vuelve a otra dirección.
 **Compilación incremental real**: archivos `rc_<módulo>_<rango 32 KB>.c` con sus propios
 prototipos; aprender una función solo recompila su archivo y los que la llaman.
 

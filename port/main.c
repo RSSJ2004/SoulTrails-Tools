@@ -207,6 +207,11 @@ int main(int argc, char** argv) {
     if (watchdog_secs) start_watchdog();
     st_boot_run(&cpu, &rom);
     printf("[port] el crt0 volvió a %08X\n", cpu.next_pc);
+    if (cpu.next_pc != ST_BOOT_RETURN) {   /* volvió a otro sitio: el flujo se perdió por el camino */
+        fprintf(stderr, "[port] detenido: el arranque volvió a %08X en vez de al cargador\n", cpu.next_pc);
+        st_rom_close(&rom);
+        return 5;
+    }
     st_rom_close(&rom);
     return 0;
 }

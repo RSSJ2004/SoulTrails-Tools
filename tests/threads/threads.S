@@ -14,14 +14,7 @@ _start:
     str r1, [r0, #56]
     ldr r1, =thread_b
     str r1, [r0, #64]
-    ldr r0, =ctx_a
-    bl save_context
-    cmp r0, #0
-    bne resumed
-    push {r4-r7}
-    ldr r0, =ctx_b
-    bl load_context
-    bkpt #1
+    bl yield_to_b               @ como el SDK: el planificador guarda y cambia de hilo
 resumed:
     ldr r0, =shared
     ldr r1, [r0]
@@ -55,6 +48,18 @@ thread_b:
 back_in_b:
     bkpt #4
 
+yield_to_b:                     @ planificador: SaveContext + LoadContext en otra función
+    push {r4, lr}
+    ldr r0, =ctx_a
+    bl save_context
+    cmp r0, #0
+    bne 1f
+    push {r4-r7}                @ la pila cambia entre SaveContext y LoadContext
+    ldr r0, =ctx_b
+    bl load_context
+    bkpt #1
+1:  pop {r4, pc}
+
 @ contexto: +0 cpsr, +4 r0-r12, +56 sp, +60 lr, +64 pc
 save_context:
     mrs r1, cpsr
@@ -63,13 +68,16 @@ save_context:
     stmia r1, {r0-r14}
     mov r1, #1
     str r1, [r0, #4]            @ al reanudarse devuelve 1
-    str lr, [r0, #64]
+    adr r1, sc_resume           @ como el SDK: se reanuda dentro de SaveContext
+    str r1, [r0, #64]
     ldr r1, =count
     ldr r2, [r1]
     add r2, r2, #1
     str r2, [r1]
     mov r0, #0
     bx lr
+sc_resume:
+    bx lr                       @ con r0 = 1 y el LR guardado
 
 load_context:
     ldr r1, [r0]
