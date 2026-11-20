@@ -113,6 +113,15 @@ recomp dio 31956 funciones (antes 57564 con el zip viejo: probablemente falsos p
 la regla de prólogo) y 2 "no soportadas" que son texto ASCII ("Titl", "vill"): falta filtrar
 candidatos que contienen cadenas.
 
+**Primera ejecución real** (`--opt fast`: compila en 0,4 min): el port arranca y se queda
+leyendo `0x04000180` (IPCSYNC, espera al ARM7) hasta el tiempo límite. Nuevo `runtime/st_hw.c`
+(`tests/test_hw.py`): registros de E/S con memoria (aviso único por dirección), IPCSYNC con **eco**
+del ARM7 HLE (bits 8-11 del ARM9 → bits 0-3), FIFO del PXI (lo enviado se registra y va a
+`st_platform.pxi_send`; respuestas con `st_pxi_reply`) y **detector de esperas** (misma E/S leída
+2 M veces sin cuadro → `halt` con el nombre del registro, código 5). Siguiente previsible: mensajes
+PXI sin respuesta o espera en RAM a que el ARM7 marque sus callbacks listos (zona de trabajo del
+sistema al final de la RAM principal) → HLE del ARM7 por tag.
+
 **Símbolos del decomp vía objdiff** (acordado con el usuario: **solo** el informe de
 `objdiff-cli report`, nunca leer el código del repo decomp): `stk recomp` escribe
 `.stk/decomp_symbols.txt` (`ADDR auto ovNNN # nombre size= match=`) si hay decomp configurado y

@@ -461,7 +461,7 @@ def cmd_recomp(a) -> None:
                 rc, log = p.returncode, (p.stdout + p.stderr)
             except subprocess.TimeoutExpired as e:
                 rc, log = -1, f"{e.stdout or ''}{e.stderr or ''}"
-            tail = "\n".join(log.strip().splitlines()[-3:])
+            tail = "\n".join(log.strip().splitlines()[-12:])
             if rc == 0:
                 print(f"[learn {it}] {PORT_EXIT[0]}")
                 break

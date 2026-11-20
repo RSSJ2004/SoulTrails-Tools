@@ -20,14 +20,21 @@ static uint32_t* irq_reg(uint32_t addr) {
 
 uint32_t st_io_read(StCpu* c, uint32_t addr, int size) {
     uint32_t* r = irq_reg(addr);
-    if (!r) return st_platform.io_read(c, addr, size);
+    if (!r) {
+        uint32_t v;
+        if (st_hw_read(c, addr, size, &v)) return v;
+        return st_platform.io_read(c, addr, size);
+    }
     uint32_t v = *r >> ((addr & 3) * 8);
     return size == 4 ? v : (v & (size == 2 ? 0xFFFFu : 0xFFu));
 }
 
 void st_io_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
     uint32_t* r = irq_reg(addr);
-    if (!r) { st_platform.io_write(c, addr, v, size); return; }
+    if (!r) {
+        if (!st_hw_write(c, addr, v, size)) st_platform.io_write(c, addr, v, size);
+        return;
+    }
     uint32_t sh = (addr & 3) * 8;
     uint32_t mask = (size == 4 ? 0xFFFFFFFFu : (size == 2 ? 0xFFFFu : 0xFFu)) << sh;
     v <<= sh;

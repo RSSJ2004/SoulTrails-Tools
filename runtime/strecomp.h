@@ -65,6 +65,10 @@ typedef struct StPlatform {
      * leer controles, sonido...) y levantar las IRQ que toquen con st_raise_irq. Devuelve 0
      * si no puede avanzar más (p. ej. al cerrar la ventana): la espera se aborta con halt. */
     int (*idle)(StCpu*);
+    /* HLE del ARM7 (opcional): mensaje que el ARM9 manda por la FIFO del PXI, y nuevo valor que
+     * publica en IPCSYNC (puede cambiar *arm7_out, lo que el ARM9 lee en los bits 0-3). */
+    void (*pxi_send)(StCpu*, uint32_t value);
+    void (*ipcsync)(StCpu*, uint32_t arm9_out, uint32_t* arm7_out);
 } StPlatform;
 
 extern StPlatform st_platform;
@@ -80,10 +84,21 @@ extern StPlatform st_platform;
 #define ST_IRQ_VBLANK 0x1u
 #define ST_IRQ_HBLANK 0x2u
 #define ST_IRQ_VCOUNT 0x4u
+#define ST_IRQ_IPCSYNC 0x10000u
+#define ST_IRQ_FIFO_SEND 0x20000u
+#define ST_IRQ_FIFO_RECV 0x40000u
 #define ST_IRQ_BIOS_RET 0x0FFFFFE0u   /* LR del manejador: vuelta al "BIOS" */
 typedef struct StIrqState { uint32_t ime, ie, if_; uint32_t served; } StIrqState;
 extern StIrqState st_irq;
 void st_raise_irq(uint32_t mask);
+/* Hardware mínimo (st_hw.c): registros de E/S, IPCSYNC, FIFO del PXI y detector de esperas */
+void st_hw_reset(void);
+void st_hw_frame(void);                     /* la plataforma avanzó un cuadro */
+void st_pxi_reply(uint32_t value);          /* respuesta del ARM7 a la FIFO del ARM9 */
+int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out);
+int st_hw_write(StCpu* c, uint32_t addr, uint32_t v, int size);
+extern int st_hw_ipcsync_echo;              /* 1: el ARM7 HLE repite lo que publica el ARM9 */
+extern unsigned long st_hw_poll_limit;      /* lecturas seguidas de la misma E/S = espera */
 int st_irq_service(StCpu* c);                       /* 1 si ejecutó el manejador del juego */
 int st_bios_swi(StCpu* c, uint32_t num);            /* 1 si es una SWI del BIOS conocida */
 uint32_t st_io_read(StCpu* c, uint32_t addr, int size);

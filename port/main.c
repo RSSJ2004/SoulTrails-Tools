@@ -24,6 +24,7 @@ static int on_idle(StCpu* c) {
         printf("[port] %lu cuadros sin fallos\n", frames);
         exit(0);
     }
+    st_hw_frame();
     st_raise_irq(ST_IRQ_VBLANK);
     return 1;
 }

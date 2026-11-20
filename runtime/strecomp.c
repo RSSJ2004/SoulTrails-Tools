@@ -62,6 +62,7 @@ static void default_bkpt(StCpu* c, uint32_t num) {
 /* Sin plataforma: cada espera "dura" un VBlank (suficiente para avanzar sin pantalla) */
 static int default_idle(StCpu* c) {
     (void)c;
+    st_hw_frame();
     st_raise_irq(ST_IRQ_VBLANK);
     return 1;
 }
@@ -132,6 +133,7 @@ void st_init(StCpu* c) {
     memset(c, 0, sizeof *c);
     c->cpsr_ctrl = 0xDF; /* modo sistema, IRQ y FIQ desactivadas */
     c->r[13] = 0x02FFFC00u;
+    st_hw_reset();
 }
 
 void st_override(uint32_t addr, StFn fn) {

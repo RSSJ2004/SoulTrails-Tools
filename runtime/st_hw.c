@@ -1,0 +1,164 @@
+/* Hardware mínimo del ARM9 visto desde el juego (capa de plataforma, fase 1):
+ *
+ * - Registros de E/S con memoria: lo que no está emulado devuelve lo último escrito (muchos
+ *   bucles leen lo que acaban de escribir) y se avisa una vez por dirección.
+ * - IPCSYNC (0x04000180): el ARM7 no se ejecuta; por defecto "hace eco" de los 4 bits que
+ *   publica el ARM9, que es el punto fijo de las esperas de sincronización entre CPU.
+ * - FIFO del PXI (0x04000184/0x04000188/0x04100000): lo que envía el ARM9 se registra y se
+ *   pasa a st_platform.pxi_send (la HLE del ARM7, por hacer); las respuestas se encolan con
+ *   st_pxi_reply().
+ * - Detector de esperas: si el juego lee la misma dirección de E/S muchísimas veces seguidas
+ *   sin que pase un cuadro, se detiene diciendo qué registro espera (en vez de agotar el tiempo).
+ *
+ * Todo está escrito a partir de la descripción del hardware (GBATEK), sin código de Nintendo. */
+#include <stdio.h>
+#include <string.h>
+
+#include "strecomp.h"
+
+#define IO_SIZE 0x2000u
+static uint8_t io_regs[IO_SIZE];          /* 0x04000000-0x04001FFF */
+static uint8_t io_warned[IO_SIZE / 2];    /* aviso único por dirección (media palabra) */
+
+static uint32_t ipc_sync_arm7;            /* bits 0-3 que ve el ARM9 */
+#define FIFO_LEN 16
+static uint32_t fifo_rx[FIFO_LEN];
+static unsigned fifo_rx_n, fifo_rx_head;
+static unsigned fifo_cnt = 0x0101u;       /* envío vacío | recepción vacía */
+static unsigned long pxi_logged;
+
+static uint32_t poll_addr, poll_count;
+unsigned long st_hw_poll_limit = 2000000ul;
+
+int st_hw_ipcsync_echo = 1;
+
+static uint32_t io_get(uint32_t addr, int size) {
+    uint32_t o = addr & (IO_SIZE - 1), v = 0;
+    memcpy(&v, &io_regs[o], (size_t)size);
+    return v;
+}
+static void io_put(uint32_t addr, uint32_t v, int size) {
+    memcpy(&io_regs[addr & (IO_SIZE - 1)], &v, (size_t)size);
+}
+
+static const char* io_name(uint32_t a) {
+    switch (a & ~1u) {
+    case 0x04000004: return "DISPSTAT";
+    case 0x04000006: return "VCOUNT";
+    case 0x04000130: return "KEYINPUT";
+    case 0x04000180: return "IPCSYNC (espera al ARM7)";
+    case 0x04000184: return "IPCFIFOCNT (FIFO con el ARM7)";
+    case 0x040001A0: case 0x040001A2: case 0x040001A4: case 0x040001A6: return "cartucho (AUXSPI/ROMCTRL)";
+    case 0x04100000: case 0x04100002: return "IPCFIFORECV (respuesta del ARM7)";
+    case 0x04100010: case 0x04100012: return "cartucho (datos)";
+    case 0x04000600: case 0x04000602: return "GXSTAT (3D)";
+    default: return "";
+    }
+}
+
+void st_hw_reset(void) {
+    memset(io_regs, 0, sizeof io_regs);
+    memset(io_warned, 0, sizeof io_warned);
+    ipc_sync_arm7 = 0;
+    fifo_rx_n = fifo_rx_head = 0;
+    fifo_cnt = 0x0101u;
+    poll_addr = poll_count = 0;
+    pxi_logged = 0;
+}
+
+void st_hw_frame(void) { poll_count = 0; }
+
+void st_pxi_reply(uint32_t v) {
+    if (fifo_rx_n == FIFO_LEN) { fifo_cnt |= 0x4000u; return; }   /* error: llena */
+    fifo_rx[(fifo_rx_head + fifo_rx_n++) % FIFO_LEN] = v;
+    fifo_cnt &= ~0x0100u;
+    if (fifo_rx_n == FIFO_LEN) fifo_cnt |= 0x0200u;
+    if (fifo_cnt & 0x0400u) st_raise_irq(ST_IRQ_FIFO_RECV);
+}
+
+static void watch_poll(StCpu* c, uint32_t addr) {
+    if (addr != poll_addr) { poll_addr = addr; poll_count = 0; return; }
+    if (++poll_count < st_hw_poll_limit) return;
+    char why[160];
+    const char* n = io_name(addr);
+    snprintf(why, sizeof why, "bucle de espera sobre E/S %08X%s%s (falta emularlo en la plataforma)", addr,
+             *n ? " " : "", n);
+    poll_count = 0;
+    st_platform.halt(c, why);
+}
+
+/* Devuelve 1 si la dirección la gestiona este módulo. */
+int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
+    watch_poll(c, addr);
+    uint32_t a = addr & ~3u;
+    if (a == 0x04000180u) {
+        uint32_t v = (io_get(0x04000180u, 4) & 0x4F00u) | (ipc_sync_arm7 & 0xFu);
+        *out = v >> ((addr & 3) * 8);
+        return 1;
+    }
+    if (a == 0x04000184u) {
+        *out = (fifo_cnt | (io_get(0x04000184u, 4) & 0x8404u)) >> ((addr & 3) * 8);
+        return 1;
+    }
+    if (a == 0x04100000u) {
+        uint32_t v = 0;
+        if (fifo_rx_n) {
+            v = fifo_rx[fifo_rx_head];
+            fifo_rx_head = (fifo_rx_head + 1) % FIFO_LEN;
+            if (--fifo_rx_n == 0) fifo_cnt |= 0x0100u;
+            fifo_cnt &= ~0x0200u;
+        } else if (io_get(0x04000184u, 4) & 0x8000u) {
+            fifo_cnt |= 0x4000u;   /* leer vacía con la FIFO activada = error */
+        }
+        *out = v;
+        return 1;
+    }
+    if (addr >= 0x04000000u && addr < 0x04000000u + IO_SIZE) {
+        uint32_t h = (addr & (IO_SIZE - 1)) / 2;
+        if (!io_warned[h]) {
+            io_warned[h] = 1;
+            const char* n = io_name(addr);
+            fprintf(stderr, "[st] E/S sin emular: read%d %08X%s%s (se devuelve lo último escrito)\n", size * 8,
+                    addr, *n ? " " : "", n);
+        }
+        *out = io_get(addr, size);
+        return 1;
+    }
+    (void)size;
+    return 0;
+}
+
+int st_hw_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
+    poll_count = 0;
+    uint32_t a = addr & ~3u;
+    if (a == 0x04000180u) {
+        uint32_t sh = (addr & 3) * 8, full = io_get(0x04000180u, 4);
+        uint32_t mask = (size == 4 ? 0xFFFFFFFFu : size == 2 ? 0xFFFFu : 0xFFu) << sh;
+        full = (full & ~mask) | ((v << sh) & mask);
+        io_put(0x04000180u, full & 0x4F00u, 4);
+        if (st_hw_ipcsync_echo) ipc_sync_arm7 = (full >> 8) & 0xFu;
+        if (st_platform.ipcsync) st_platform.ipcsync(c, (full >> 8) & 0xFu, &ipc_sync_arm7);
+        return 1;
+    }
+    if (a == 0x04000184u) {
+        uint32_t w = v << ((addr & 3) * 8);
+        if (w & 0x0008u) fifo_cnt = (fifo_cnt & ~0x0003u) | 0x0001u;   /* vaciar envío */
+        if (w & 0x4000u) fifo_cnt &= ~0x4000u;                         /* reconocer error */
+        io_put(0x04000184u, w & 0x8404u, 4);
+        fifo_cnt = (fifo_cnt & ~0x8404u) | (w & 0x8404u);
+        return 1;
+    }
+    if (a == 0x04000188u) {
+        if (pxi_logged++ < 64)
+            fprintf(stderr, "[st] PXI ARM9->ARM7 %08X (tag %u, datos %07X)\n", v, v & 0x1Fu, v >> 6);
+        if (st_platform.pxi_send) st_platform.pxi_send(c, v);
+        if (fifo_cnt & 0x0004u) st_raise_irq(ST_IRQ_FIFO_SEND);
+        return 1;
+    }
+    if (addr >= 0x04000000u && addr < 0x04000000u + IO_SIZE) {
+        io_put(addr, v, size);
+        return 1;
+    }
+    (void)c;
+    return 0;
+}
