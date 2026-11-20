@@ -34,6 +34,17 @@ class Discover(unittest.TestCase):
         for a in info["funcs"]:                              # cada función con su cuerpo exacto
             self.assertEqual(sorted(p.functions[("main", a)].insns), [a, a + 4, a + 8, a + 12])
 
+    def test_arm_and_thumb_seed_prefers_valid_mode(self):
+        """Una dirección sembrada como ARM (datos que no son ARM válido) y luego saltada en Thumb:
+        se queda la versión Thumb (con la ROM, "vill" = 2 ldr Thumb tomados por ARM inválido)."""
+        import struct
+        data = struct.pack("<2I", 0xE7F000F0, 0x46C04770)   # ARM indefinida | Thumb: lsls; b; bx lr; nop
+        m = Module("main", BASE, data)
+        for seeds in ([(BASE, False, m), (BASE, True, m)], [(BASE, True, m), (BASE, False, m)]):
+            p = Program([m])
+            p.discover(seeds, pointer_scan=False)
+            self.assertTrue(p.functions[("main", BASE)].thumb)
+
     def test_deterministic_and_reused(self):
         data, _ = B.code_with_data(BASE, 50, 10, 5000, seed=7)
         p1, f1 = discover(data)

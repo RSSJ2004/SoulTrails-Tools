@@ -91,6 +91,15 @@ Lección: el arranque (y melonDS) machaca los primeros 2 KB del ARM9 (área segu
 el código de prueba va en 0x02000800. Pendiente: probar en Windows con clang-cl y la ROM real,
 ventana SDL con las pantallas/sonido/entrada de melonDS, renderizador OpenGL.
 
+**Híbrido en Windows (clang-cl de LLVM + Ninja + vcvars64)**: compila y corre con la ROM real.
+Ajustes de compatibilidad de melonDS con clang-cl: strncasecmp, dirent.h vacío, _USE_MATH_DEFINES,
+__WIN32__ (lo que define MinGW). Bug destapado por clang (C99): prototipos de funciones usadas
+como argumento de ST_CALL (regex FN_NAME). Con melonDS el juego avanza más (7 funciones nuevas en
+overlays 020B/020D) y paró en ov001:020C2CC0 "vill": era **código Thumb** y el despachador cogía una
+"función" ARM falsa en la misma dirección (sin mirar el modo). Ahora `lookup` exige el modo del
+salto (bit 0) y el recompilador, ante ARM y Thumb en la misma dirección, se queda con el modo sin
+instrucciones inválidas (`tests/test_discover.py::test_arm_and_thumb_seed_prefers_valid_mode`).
+
 ## Decisiones de diseño
 1. **El port lee la ROM del usuario en tiempo de ejecución** (`soultrails_port --rom juego.nds`),
    como N64Recomp: no se empaqueta nada del juego en el ejecutable salvo el código traducido

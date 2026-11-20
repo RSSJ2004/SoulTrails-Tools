@@ -199,14 +199,18 @@ int st_overlay_is_loaded(int id) {
     return id >= 0 && id < (int)sizeof overlay_loaded && overlay_loaded[id];
 }
 
-static const StFnEntry* find_in(const StModule* m, uint32_t addr) {
+/* thumb: 0 ARM, 1 Thumb, -1 cualquiera. Una dirección puede tener entrada ARM y Thumb; el
+ * modo del salto decide (con la ROM, un salto Thumb acababa en una "función" ARM falsa). */
+static const StFnEntry* find_in(const StModule* m, uint32_t addr, int thumb) {
     unsigned lo = 0, hi = m->count;
     while (lo < hi) {
         unsigned mid = (lo + hi) / 2;
         if (m->fns[mid].addr < addr) lo = mid + 1;
         else hi = mid;
     }
-    return (lo < m->count && m->fns[lo].addr == addr) ? &m->fns[lo] : NULL;
+    for (; lo < m->count && m->fns[lo].addr == addr; lo++)
+        if (thumb < 0 || (int)m->fns[lo].thumb == thumb) return &m->fns[lo];
+    return NULL;
 }
 
 uint32_t st_signature(uint32_t addr, uint32_t end) {
@@ -223,7 +227,7 @@ uint32_t st_signature(uint32_t addr, uint32_t end) {
 /* Resuelve una dirección a una función traducida. Los módulos residentes (estático, ITCM)
  * ganan; entre overlays, primero el marcado a mano con st_overlay_set_loaded y si no el que
  * coincide con la memoria (ver HANDOFF.md, "Decisiones de diseño"). */
-static const StFnEntry* lookup(uint32_t addr, const StModule** mod) {
+static const StFnEntry* lookup(uint32_t addr, int thumb, const StModule** mod) {
     const StFnEntry* by_sig = NULL;
     const StModule* sig_mod = NULL;
     uint32_t mem_sig = 0;
@@ -231,7 +235,7 @@ static const StFnEntry* lookup(uint32_t addr, const StModule** mod) {
     for (unsigned i = 0; i < st_module_count; i++) {
         const StModule* m = &st_modules[i];
         if (addr < m->start || addr >= m->end) continue;
-        const StFnEntry* e = find_in(m, addr);
+        const StFnEntry* e = find_in(m, addr, thumb);
         if (!e) continue;
         if (m->overlay < 0 || st_overlay_is_loaded(m->overlay)) { if (mod) *mod = m; return e; }
         if (by_sig) continue;
@@ -252,7 +256,7 @@ void st_call(StCpu* c, uint32_t target) {
     uint32_t addr = target & ~1u;
     for (size_t i = 0; i < n_overrides; i++)
         if (overrides[i].addr == addr) { overrides[i].fn(c); return; }
-    const StFnEntry* e = lookup(addr, NULL);
+    const StFnEntry* e = lookup(addr, (int)(target & 1u), NULL);
     if (e) { e->fn(c); return; }
     if (miss_log) {
         /* La firma deja que el recompilador sepa qué overlay estaba cargado */
@@ -287,7 +291,7 @@ const char* st_symbol_near(uint32_t addr) {
 const char* st_symbol_for(uint32_t addr) {
     static char buf[64];
     const StModule* m = NULL;
-    const StFnEntry* e = lookup(addr & ~1u, &m);
+    const StFnEntry* e = lookup(addr & ~1u, -1, &m);
     if (!e) return "?";
     snprintf(buf, sizeof buf, "%s:%08X", m->name, e->addr);
     return buf;

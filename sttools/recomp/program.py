@@ -325,7 +325,17 @@ class Program:
             key = (m.name, addr)
             if key in starts:
                 if starts[key] != is_thumb:
-                    self.warnings.append(f"{m.name}:{addr:#x} llamada en ARM y Thumb a la vez")
+                    # Con la ROM: un salto Thumb real a una dirección que el escaneo había tomado
+                    # por una "función" ARM sacada de texto. Gana el modo sin instrucciones inválidas.
+                    old_bad = any(i.kind == UNDEF for i in self.trace_free(m, addr, starts[key]).insns.values())
+                    new_bad = any(i.kind == UNDEF for i in self.trace_free(m, addr, is_thumb).insns.values())
+                    if old_bad and not new_bad:
+                        starts[key] = is_thumb
+                        f = self.trace_free(m, addr, is_thumb)
+                        for t in f.calls:
+                            queue.append((t & ~1, bool(t & 1), m))
+                    else:
+                        self.warnings.append(f"{m.name}:{addr:#x} llamada en ARM y Thumb a la vez")
                 continue
             starts[key] = is_thumb
             f = self.trace_free(m, addr, is_thumb)
