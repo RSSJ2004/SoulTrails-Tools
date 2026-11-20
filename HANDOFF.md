@@ -122,6 +122,14 @@ del ARM7 HLE (bits 8-11 del ARM9 → bits 0-3), FIFO del PXI (lo enviado se regi
 PXI sin respuesta o espera en RAM a que el ARM7 marque sus callbacks listos (zona de trabajo del
 sistema al final de la RAM principal) → HLE del ARM7 por tag.
 
+**Tras VCOUNT**: la ejecución agota el tiempo sin ninguna E/S (giro en RAM o bucle). Añadido
+**vigilante** al port (`--watchdog S`, código 6; stk lo pasa como `--timeout`-10): vuelca registros
+y las últimas 64 funciones en las que se entró (`ST_TRACE` al inicio de cada función generada;
+`ST_NO_TRACE` lo quita). Prueba: `tests/test_pipeline.py::Watchdog`.
+
+**Decomp**: estado y pasos en `docs/DECOMP.md` (en Windows su regla de regenerar `build.ninja`
+usa `&&` sin `cmd` y falla; el usuario lo dejó aparcado).
+
 **Símbolos del decomp vía objdiff** (acordado con el usuario: **solo** el informe de
 `objdiff-cli report`, nunca leer el código del repo decomp): `stk recomp` escribe
 `.stk/decomp_symbols.txt` (`ADDR auto ovNNN # nombre size= match=`) si hay decomp configurado y

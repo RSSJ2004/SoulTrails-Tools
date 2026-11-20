@@ -15,6 +15,8 @@ uint32_t st_dtcm_base = 0x027E0000u;
 static uint32_t st_itcm_size = 0x02000000u;  /* ITCM visible en 0..32MB (espejado) */
 
 static FILE* miss_log;
+volatile uint32_t st_trace_ring[ST_TRACE_LEN];
+volatile uint32_t st_trace_pos;
 static unsigned char overlay_loaded[1024];
 
 /* ------------------------------------------------------------- plataforma */

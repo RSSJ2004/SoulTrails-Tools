@@ -220,6 +220,16 @@ static inline uint32_t st_ldr32(StCpu* c, uint32_t addr) {
 }
 
 /* ---- Macros usadas por el código generado ---- */
+/* Traza de las últimas funciones en las que se entró (para diagnosticar cuelgues). Cuesta una
+ * escritura por llamada; se quita compilando con ST_NO_TRACE. */
+#define ST_TRACE_LEN 64u
+extern volatile uint32_t st_trace_ring[ST_TRACE_LEN];
+extern volatile uint32_t st_trace_pos;
+#ifdef ST_NO_TRACE
+#define ST_TRACE(a) ((void)0)
+#else
+#define ST_TRACE(a) (st_trace_ring[st_trace_pos++ & (ST_TRACE_LEN - 1)] = (a))
+#endif
 #define ST_RETURN(v) do { c->next_pc = (v); return; } while (0)
 #define ST_INDIRECT(v) do { jt = (v); goto st_dispatch; } while (0)
 #define ST_TAIL(fn) do { fn(c); return; } while (0)

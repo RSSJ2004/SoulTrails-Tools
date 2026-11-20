@@ -91,6 +91,7 @@ class Generator:
                f"void {f.cname}(StCpu* c) {{"]
         if has_indirect:
             out.append("    uint32_t jt;")
+        out.append(f"    ST_TRACE({h(f.addr | tbit)});")
         out.append(f"    goto {label(f.addr)};")
         for i, a in enumerate(addrs):
             ins = f.insns[a]

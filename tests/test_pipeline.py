@@ -108,3 +108,21 @@ class Pipeline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(shutil.which("cmake"), "falta cmake")
+class Watchdog(unittest.TestCase):
+    def test_learn_reports_spin(self):
+        """Un juego que gira sin E/S ni llamadas: el vigilante del port dice dónde (código 6)."""
+        arm9 = struct.pack("<4I", 0xEB000000, 0xEAFFFFFE,     # bl spin ; b .
+                           0xE3A00001, 0xEAFFFFFE)             # spin: mov r0,#1 ; b .
+        rom = B.rom({}, arm9=arm9 + bytes(64))
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "game.nds").write_bytes(rom)
+            env = dict(os.environ, STK_HOME=str(d / "work"))
+            stk = [sys.executable, ROOT / "stk.py"]
+            sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
+            out = sh(*stk, "recomp", "--learn", "--timeout", "15", env=env)
+            self.assertIn("vigilante", out, out)
+            self.assertRegex(out, r"02000008 arm9:02000008", out)    # la función que gira

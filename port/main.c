@@ -1,18 +1,26 @@
 /* soultrails_port: arranca el código recompilado con la ROM del usuario.
  *
- *   soultrails_port --rom juego.nds [--misses .stk/recomp_misses.txt] [--max-frames N]
+ *   soultrails_port --rom juego.nds [--misses .stk/recomp_misses.txt] [--max-frames N] [--watchdog S]
  *
  * Todavía no hay capa de plataforma (GPU, sonido, cartucho...): el juego avanzará hasta la
  * primera cosa que necesite de ella. Códigos de salida (los usa `stk recomp --learn`):
  *   0 el crt0 volvió o se llegó a --max-frames   2 uso/ROM
  *   3 función no traducida (apuntada en --misses)
  *   4 instrucción no soportada     5 detenido (bkpt u otro)
+ *   6 vigilante: S segundos sin terminar (se vuelca la traza de las últimas funciones)
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "st_rom.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <unistd.h>
+#endif
 
 static StCpu cpu;
 static unsigned long frames, max_frames;
@@ -43,6 +51,54 @@ static void on_halt(StCpu* c, const char* why) {
     exit(5);
 }
 
+/* Vigilante: si el juego gira sin terminar (p. ej. esperando en RAM algo que escribe el ARM7),
+ * vuelca dónde estaba antes de que stk agote el tiempo. Lee el estado sin sincronizar: es
+ * solo para diagnóstico. */
+static unsigned watchdog_secs;
+
+static void watchdog_dump(void) {
+    fprintf(stderr, "[port] vigilante: %u s sin terminar, %lu cuadros\n", watchdog_secs, frames);
+    fprintf(stderr, "[port] registros:");
+    for (int i = 0; i < 16; i++) fprintf(stderr, " r%d=%08X", i, cpu.r[i]);
+    fprintf(stderr, "\n[port] últimas funciones (la más reciente al final):\n");
+    uint32_t pos = st_trace_pos;
+    uint32_t n = pos < ST_TRACE_LEN ? pos : ST_TRACE_LEN;
+    uint32_t prev = 0, rep = 0;
+    for (uint32_t i = pos - n; i != pos; i++) {
+        uint32_t a = st_trace_ring[i & (ST_TRACE_LEN - 1)];
+        if (a == prev) { rep++; continue; }
+        if (rep) fprintf(stderr, "    (x%u)\n", rep + 1);
+        rep = 0;
+        prev = a;
+        fprintf(stderr, "  %08X %s\n", a, st_symbol_for(a));
+    }
+    if (rep) fprintf(stderr, "    (x%u)\n", rep + 1);
+    fflush(stderr);
+    _Exit(6);
+}
+
+#ifdef _WIN32
+static DWORD WINAPI watchdog_thread(LPVOID arg) {
+    (void)arg;
+    Sleep(watchdog_secs * 1000u);
+    watchdog_dump();
+    return 0;
+}
+static void start_watchdog(void) { CreateThread(NULL, 0, watchdog_thread, NULL, 0, NULL); }
+#else
+static void* watchdog_thread(void* arg) {
+    (void)arg;
+    sleep(watchdog_secs);
+    watchdog_dump();
+    return NULL;
+}
+static void start_watchdog(void) {
+    pthread_t t;
+    pthread_create(&t, NULL, watchdog_thread, NULL);
+    pthread_detach(t);
+}
+#endif
+
 int main(int argc, char** argv) {
     const char* rom_path = NULL;
     const char* misses = NULL;
@@ -50,7 +106,8 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom_path = argv[++i];
         else if (!strcmp(argv[i], "--misses") && i + 1 < argc) misses = argv[++i];
         else if (!strcmp(argv[i], "--max-frames") && i + 1 < argc) max_frames = strtoul(argv[++i], NULL, 10);
-        else { fprintf(stderr, "uso: %s --rom juego.nds [--misses archivo] [--max-frames N]\n", argv[0]); return 2; }
+        else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) watchdog_secs = (unsigned)strtoul(argv[++i], NULL, 10);
+        else { fprintf(stderr, "uso: %s --rom juego.nds [--misses archivo] [--max-frames N] [--watchdog S]\n", argv[0]); return 2; }
     }
     if (!rom_path) { fprintf(stderr, "falta --rom\n"); return 2; }
     StRom rom;
@@ -63,6 +120,7 @@ int main(int argc, char** argv) {
     st_platform.unimpl = on_unimpl;
     st_platform.halt = on_halt;
     st_platform.idle = on_idle;
+    if (watchdog_secs) start_watchdog();
     st_boot_run(&cpu, &rom);
     printf("[port] el crt0 volvió a %08X\n", cpu.next_pc);
     st_rom_close(&rom);

@@ -427,7 +427,8 @@ def port_build(out: Path, opt: str = "release") -> Path:
 
 
 PORT_EXIT = {0: "terminó sin fallos", 2: "error de uso o de ROM", 3: "función no traducida",
-             4: "instrucción no soportada", 5: "detenido (bkpt, espera abortada o falta la capa de plataforma)"}
+             4: "instrucción no soportada", 5: "detenido (bkpt, espera abortada o falta la capa de plataforma)",
+             6: "sin terminar (vigilante): el juego gira en algún bucle; abajo, las últimas funciones"}
 
 
 def miss_lines() -> list[str]:
@@ -454,7 +455,8 @@ def cmd_recomp(a) -> None:
     if a.learn:
         for it in range(1, a.max_iter + 1):
             before = set(miss_lines())
-            cmd = [str(exe), "--rom", cfg["rom"], "--misses", str(MISSES), "--max-frames", str(a.max_frames)]
+            cmd = [str(exe), "--rom", cfg["rom"], "--misses", str(MISSES), "--max-frames", str(a.max_frames),
+                   "--watchdog", str(max(5, a.timeout - 10))]
             print(f"[learn {it}] $ {' '.join(cmd)}", flush=True)
             try:
                 p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=a.timeout)
