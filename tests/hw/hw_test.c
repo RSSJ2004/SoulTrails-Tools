@@ -209,6 +209,12 @@ int main(void) {
     st_mcr(&c, 15, 0, 7, 0, 4, 0);
     CHECK(idles == before + 1);
 
+    /* KEYINPUT: nada pulsado = 3FFh; pulsar A y Start */
+    CHECK(st_read16(&c, 0x04000130) == 0x03FF);
+    st_input_set_keys(0x0009);
+    CHECK(st_read16(&c, 0x04000130) == 0x03F6);
+    st_input_set_keys(0);
+
     printf(fails ? "hw: %d fallos\n" : "hw: OK\n", fails);
     return fails != 0;
 }

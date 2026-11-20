@@ -204,6 +204,11 @@ Ahora cada función con llamadas guarda `my_ret = LR` al entrar y, ante una vuel
 ejecuta ese destino y vuelve a mirar a dónde quiere volver (bucle) hasta que sea un punto suyo o
 `my_ret`. La prueba `Threads` imita al SDK (planificador intermedio, reanudación dentro de
 SaveContext) y falla sin el arreglo. El port sale con 5 si el arranque vuelve a otra dirección.
+**FASE 1 CUMPLIDA (2026-11)**: `--learn` llega a 600 cuadros sin fallos y las capturas muestran la
+pantalla del logo de Nintendo dibujada por `st_gpu2d.c` (correcta). Se quedaba ahí: KEYINPUT
+(0x04000130) devolvía 0 = todos los botones pulsados. Ahora vale 3FFh (suelto) y
+`st_input_set_keys(mask)` lo cambia; botones del ARM7 (X/Y/lápiz/bisagra) en 027FFFA8h = 007Fh
+(nada pulsado, abierta; dirección supuesta del SDK).
 **Compilación incremental real**: archivos `rc_<módulo>_<rango 32 KB>.c` con sus propios
 prototipos; aprender una función solo recompila su archivo y los que la llaman.
 

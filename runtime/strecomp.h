@@ -119,6 +119,8 @@ int st_thread_take_prev_sp(uint32_t* sp);
 /* IRQ fuera de las esperas: se comprueba al entrar en cada función generada (ST_TRACE) */
 extern volatile int st_irq_pending;
 void st_irq_poll(StCpu* c);
+/* Entrada: máscara de botones pulsados (bit 0 A ... bit 9 L) */
+void st_input_set_keys(uint16_t pressed_mask);
 extern int st_hw_ipcsync_echo;              /* 1: el ARM7 HLE repite lo que publica el ARM9 */
 extern unsigned long st_hw_poll_limit;      /* lecturas seguidas de la misma E/S = espera */
 int st_irq_service(StCpu* c);                       /* 1 si ejecutó el manejador del juego */

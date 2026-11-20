@@ -40,6 +40,10 @@ unsigned long st_hw_poll_limit = 2000000ul;
 
 int st_hw_ipcsync_echo = 1;
 
+/* Botones: KEYINPUT (0x04000130) va al revés, 1 = suelto. A B Select Start Der Izq Arr Abj R L */
+static uint16_t keys_now = 0x03FFu;
+void st_input_set_keys(uint16_t pressed_mask) { keys_now = (uint16_t)(~pressed_mask & 0x03FFu); }
+
 static uint32_t io_get(uint32_t addr, int size) {
     uint32_t o = addr & (IO_SIZE - 1), v = 0;
     memcpy(&v, &io_regs[o], (size_t)size);
@@ -57,7 +61,6 @@ static const char* io_name(uint32_t a) {
     switch (a & ~1u) {
     case 0x04000004: return "DISPSTAT";
     case 0x04000006: return "VCOUNT";
-    case 0x04000130: return "KEYINPUT";
     case 0x04000180: return "IPCSYNC (espera al ARM7)";
     case 0x04000184: return "IPCFIFOCNT (FIFO con el ARM7)";
     case 0x040001A0: case 0x040001A2: case 0x040001A4: case 0x040001A6: return "cartucho (AUXSPI/ROMCTRL)";
@@ -168,6 +171,11 @@ int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
         return 1;
     }
     if (st_dev_read(c, addr, size, out)) return 1;
+    if (a == 0x04000130u) {   /* KEYINPUT + KEYCNT */
+        uint32_t v = keys_now | (io_get(0x04000132u, 2) << 16);
+        *out = (v >> ((addr & 3) * 8)) & (size == 4 ? 0xFFFFFFFFu : size == 2 ? 0xFFFFu : 0xFFu);
+        return 1;
+    }
     if (addr >= 0x08000000u && addr < 0x0B000000u) {   /* ranura GBA vacía: sin accesorios */
         static int warned;
         if (!warned++) fprintf(stderr, "[st] ranura GBA: no hay cartucho (lecturas a 0)\n");

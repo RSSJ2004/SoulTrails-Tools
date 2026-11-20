@@ -105,6 +105,9 @@ static void boot_system_area(const StRom* rom) {
     /* El ARM7 real marca aquí qué tags del PXI atiende al registrar sus callbacks; el ARM9 espera
      * a verlos antes de usar cada servicio (visto con la ROM: bucle sobre 027FFF8C). */
     put32(0x027FFF8Cu, st_boot_arm7_tags);
+    /* Botones que lee el ARM7 (X, Y, lápiz, bisagra) en la zona compartida: nada pulsado,
+     * consola abierta (como EXTKEYIN: 1 = suelto; bit 6 lápiz levantado; bit 7 = 0 abierta) */
+    put16(0x027FFFA8u, 0x007Fu);
     /* Ajustes de usuario (0x70 bytes en 27FFC80h) */
     uint32_t u = 0x027FFC80u;
     static const uint16_t nick[] = {'L', 'i', 'n', 'k'};
