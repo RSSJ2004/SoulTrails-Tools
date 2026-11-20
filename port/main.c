@@ -155,7 +155,10 @@ static void on_miss(StCpu* c, uint32_t addr) {
     exit(3);
 }
 static void on_unimpl(StCpu* c, uint32_t addr, uint32_t insn, int thumb) {
-    (void)c;
+    dump_trace();
+    fprintf(stderr, "[port] registros:");
+    for (int i = 0; i < 15; i++) fprintf(stderr, " r%d=%08X", i, c->r[i]);
+    fprintf(stderr, " cpsr=%08X\n[port] LR %08X está en %s\n", st_get_cpsr(c), c->r[14], st_symbol_near(c->r[14] - 2));
     fprintf(stderr, "[port] instrucción no soportada %s %08X: %08X\n", thumb ? "Thumb" : "ARM", addr, insn);
     exit(4);
 }
