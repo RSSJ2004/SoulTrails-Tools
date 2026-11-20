@@ -220,6 +220,14 @@ class Program:
                     return True
         return False
 
+    def has_prologue(self, m: Module, addr: int, is_thumb: bool) -> bool:
+        """'stmdb sp!, {..., lr}' (ARM) o 'push {..., lr}' (Thumb) en addr."""
+        if is_thumb:
+            hw = self.read(m, addr, 2)
+            return hw is not None and (hw & 0xFF00) == 0xB500
+        w = self.read(m, addr, 4)
+        return w is not None and (w & 0xFFFF4000) == 0xE92D4000
+
     def thumb_table(self, m: Module, addr: int) -> list[int] | None:
         """Destinos de una tabla de saltos Thumb en addr (ver jumptable.py), memorizado."""
         key = (m.name, addr)
@@ -265,8 +273,12 @@ class Program:
                     mm = next((x for b, e, x in resident if b <= tgt < e), None)
                     if mm is not None:
                         mms = (mm,)
-                    else:  # puntero a un overlay desde otro módulo: probar los que lo cubren
-                        mms = tuple(x for x in overlays if x.base <= tgt < x.end and x is not m)
+                    else:
+                        # Puntero a un overlay desde otro módulo: no se sabe cuál estará cargado,
+                        # así que solo se acepta si en ese overlay empieza con un prólogo real
+                        # (si no, salen funciones falsas en los overlays que no tocan).
+                        mms = tuple(x for x in overlays if x.base <= tgt < x.end and x is not m
+                                    and self.has_prologue(x, tgt, th))
                         if not mms:
                             continue
                 if (not th and tgt & 3) or (name, mbase + 4 * i) in code:
@@ -284,7 +296,8 @@ class Program:
             if m is None:
                 # Llamada a otro overlay (p. ej. de un overlay a otro cargado a la vez)
                 for o in self.overlays_at(addr):
-                    if o is not mod and (o.name, addr) not in starts and self.plausible(o, addr, is_thumb):
+                    if (o is not mod and (o.name, addr) not in starts and self.plausible(o, addr, is_thumb)
+                            and (len(self.overlays_at(addr)) == 1 or self.has_prologue(o, addr, is_thumb))):
                         queue.append((addr | int(is_thumb), is_thumb, o))
                 continue
             key = (m.name, addr)

@@ -89,6 +89,15 @@ tests/                 learn/ (prog.c para --learn), bios/ (bios.c, bios_thumb.c
 ## Qué agregar / reparar (por prioridad)
 
 ### A. Validar con la ROM real (lo primero)
+**Primeros resultados (EUR, `BKIP`, sha1 9e99cc80…)**: CRC de la cabecera OK; ARM9 en 0x02000000,
+entrada 0x02000800, comprimido con BLZ, SDK 0x04027539; ModuleParams encontrado; segmentos
+arm9 282048 B, **ITCM 0x01FF8000** (32288 B), **DTCM 0x027E0000** (512 B); 114 overlays; 3442
+archivos. `stk assets`: 0 errores en 108 s, pero 9692 `bin` sin identificar (falta ver
+`report.txt`). `stk recomp`: 57564 funciones, 2,6 M instrucciones, 12 no soportadas, 31 s.
+Avisos "llamada en ARM y Thumb a la vez" en 0x20b6520 de 8 overlays → causados por los punteros
+del estático hacia overlays probados en todos los overlays: ahora exigen prólogo. El usuario no
+tenía CMake: `stk` ahora lo explica (y `doctor` comprueba CMake y compilador; en Windows usa
+Visual Studio si no hay compilador en el PATH).
 1. `stk rom`: ahora muestra si el **CRC de la cabecera** (0x15E) coincide. Comprobar que se encuentra ModuleParams (marca `21 06 C0 DE DE C0 06 21`, struct en
    marca−0x1C), que el ARM9 se descomprime bien (BLZ) y que salen los autoloads ITCM/DTCM con
    direcciones razonables (ITCM ~0x01FF8000, DTCM ~0x027E0000).

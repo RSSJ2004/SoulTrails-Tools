@@ -153,6 +153,8 @@ class Generator:
             "if(NOT MSVC)\n  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -fno-strict-aliasing)\nendif()\n",
             encoding="utf-8")
         ninsn = sum(len(f.insns) for f in funcs)
-        nundef = sum(1 for f in funcs for i in f.insns.values() if i.kind == UNDEF)
-        return {"functions": len(funcs), "instructions": ninsn, "undefined": nundef, "files": files,
+        undef = sorted({(f.module.name, a, i.raw, f.thumb) for f in funcs for a, i in f.insns.items() if i.kind == UNDEF})
+        nundef = len(undef)
+        ulist = [f"{mn}:{a:08X} {'Thumb' if t else 'ARM'} {raw:0{4 if t else 8}X}" for mn, a, raw, t in undef]
+        return {"functions": len(funcs), "instructions": ninsn, "undefined": nundef, "undefined_list": ulist, "files": files,
                 "warnings": self.prog.warnings}

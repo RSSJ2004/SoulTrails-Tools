@@ -111,7 +111,12 @@ def journal(text: str) -> None:
 
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> int:
     print(f"$ {' '.join(str(c) for c in cmd)}", flush=True)
-    rc = subprocess.call([str(c) for c in cmd], cwd=str(cwd) if cwd else None)
+    try:
+        rc = subprocess.call([str(c) for c in cmd], cwd=str(cwd) if cwd else None)
+    except FileNotFoundError:
+        journal(f"FALTA el programa `{cmd[0]}`")
+        sys.exit(f"No encuentro el programa '{cmd[0]}'. Instálalo y asegúrate de que está en el PATH "
+                 f"(python stk.py doctor dice qué falta y cómo instalarlo).")
     if check and rc != 0:
         journal(f"FALLO ({rc}): `{' '.join(str(c) for c in cmd)}`")
         sys.exit(rc)
@@ -201,6 +206,12 @@ def cmd_doctor(a) -> None:
     print("Herramientas:")
     check("Python >= 3.10", sys.version_info >= (3, 10), "actualiza Python")
     check("ninja", shutil.which("ninja"), "instala Ninja")
+    check("cmake (recomp --compile/--learn, frontend)", shutil.which("cmake"),
+          "Windows: winget install Kitware.CMake  (o https://cmake.org/download/)")
+    cc = c_compiler()
+    check(f"compilador de C/C++ ({cc or 'ninguno'})", cc,
+          "Windows: Visual Studio Build Tools con 'Desarrollo para el escritorio con C++' "
+          "(winget install Microsoft.VisualStudio.2022.BuildTools) o MinGW-w64")
     check("java (JDK 21+ para Ghidra)", shutil.which("java"), "instala un JDK 21")
     check("Ghidra", find_ghidra(), "python stk.py setup")
     g = find_ghidra()
@@ -330,6 +341,7 @@ def cmd_assets(a) -> None:
 
 # -------------------------------------------------------------------- recomp
 MISSES = STATE_DIR / "recomp_misses.txt"
+WARNINGS = STATE_DIR / "recomp_warnings.txt"
 
 
 def recomp_once(a, cfg, rom, out: Path) -> dict:
@@ -346,17 +358,58 @@ def recomp_once(a, cfg, rom, out: Path) -> dict:
                      comments=not a.no_comments)
     print(f"{res['functions']} funciones, {res['instructions']} instrucciones, "
           f"{res['undefined']} no soportadas, {len(res['files'])} archivos C en {out} ({time.time() - t0:.0f}s)")
-    for w in res["warnings"][:10]:
-        print("  aviso:", w)
+    WARNINGS.write_text("\n".join(res["warnings"]) + "\n", encoding="utf-8")
+    if res["warnings"]:
+        kinds = {}
+        for w in res["warnings"]:
+            k = w.split(": ", 1)[-1] if ": " in w else w
+            k = "llamada en ARM y Thumb a la vez" if "ARM y Thumb" in w else k
+            kinds[k] = kinds.get(k, 0) + 1
+        print(f"  {len(res['warnings'])} avisos (todos en {WARNINGS}):")
+        for k, n in sorted(kinds.items(), key=lambda kv: -kv[1])[:5]:
+            print(f"    {n:6}  {k}")
+    for u in res.get("undefined_list", [])[:20]:
+        print(f"  no soportada: {u}")
     return res
 
 
+def c_compiler() -> str | None:
+    """Compilador de C que CMake podrá usar (en Windows, Visual Studio aunque no esté en el PATH)."""
+    for c in ("cl", "gcc", "clang", "cc"):
+        if shutil.which(c):
+            return c
+    if os.name == "nt":
+        vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+        if vswhere.exists():
+            r = subprocess.run([str(vswhere), "-latest", "-products", "*", "-requires",
+                                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+                               capture_output=True, text=True)
+            if r.stdout.strip():
+                return "Visual Studio"
+    return None
+
+
 def port_build(out: Path) -> Path:
+    if not shutil.which("cmake"):
+        sys.exit("Falta CMake para compilar el código recompilado.\n"
+                 "  Windows: winget install Kitware.CMake  (o https://cmake.org/download/, marca 'añadir al PATH')\n"
+                 "  y un compilador: Visual Studio Build Tools con C++ (winget install Microsoft.VisualStudio.2022.BuildTools).\n"
+                 "Cierra y vuelve a abrir la consola tras instalar, y comprueba con: python stk.py doctor")
+    cc = c_compiler()
+    if not cc:
+        sys.exit("Falta un compilador de C. Windows: Visual Studio Build Tools con 'Desarrollo para el escritorio con C++' "
+                 "(winget install Microsoft.VisualStudio.2022.BuildTools) o MinGW-w64. Comprueba con: python stk.py doctor")
     bdir = out.parent / "recomp-build"
-    gen = ["-G", "Ninja"] if shutil.which("ninja") and not (bdir / "CMakeCache.txt").exists() else []
+    # Ninja solo si hay un compilador en el PATH; en Windows sin él, CMake elige Visual Studio
+    use_ninja = shutil.which("ninja") and cc != "Visual Studio"
+    gen = ["-G", "Ninja"] if use_ninja and not (bdir / "CMakeCache.txt").exists() else []
     run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", "-DCMAKE_BUILD_TYPE=Release", *gen])
-    run(["cmake", "--build", bdir, "--parallel"])
-    return bdir / ("soultrails_port.exe" if os.name == "nt" else "soultrails_port")
+    run(["cmake", "--build", bdir, "--parallel", "--config", "Release"])
+    name = "soultrails_port.exe" if os.name == "nt" else "soultrails_port"
+    for cand in (bdir / name, bdir / "Release" / name):
+        if cand.exists():
+            return cand
+    return bdir / name
 
 
 PORT_EXIT = {0: "terminó sin fallos", 2: "error de uso o de ROM", 3: "función no traducida",
