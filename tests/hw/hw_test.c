@@ -16,12 +16,15 @@ static void on_halt(StCpu* c, const char* why) { (void)c; snprintf(halted, sizeo
 static uint32_t sent[8];
 static int nsent;
 static void on_pxi(StCpu* c, uint32_t v) { (void)c; sent[nsent++ & 7] = v; }
+static int idles;
+static int on_idle(StCpu* c) { (void)c; idles++; st_hw_frame(); return 1; }
 
 int main(void) {
     StCpu c;
     st_init(&c);
     st_platform.halt = on_halt;
     st_platform.pxi_send = on_pxi;
+    st_platform.idle = on_idle;
 
     /* Registro sin emular: devuelve lo último escrito */
     st_write16(&c, 0x04000304, 0x820F);
@@ -50,8 +53,22 @@ int main(void) {
     st_write16(&c, 0x04000184, 0x8000 | 0x4000);       /* reconocer */
     CHECK(!(st_read16(&c, 0x04000184) & 0x4000));
 
+    /* VCOUNT avanza al leerlo; VBlank con IRQ y una vuelta = un cuadro */
+    st_write16(&c, 0x04000004, 0x0008);
+    st_irq.if_ = 0;
+    int seen_vblank = 0;
+    for (int i = 0; i < 300; i++) {
+        uint16_t vc = (uint16_t)st_read16(&c, 0x04000006);
+        CHECK(vc < 263);
+        if (vc == 200) seen_vblank = (st_read16(&c, 0x04000004) & 1) != 0;
+    }
+    CHECK(seen_vblank);
+    CHECK(st_irq.if_ & ST_IRQ_VBLANK);
+    CHECK(idles >= 1);
+
     /* Detector de esperas */
     st_hw_poll_limit = 1000;
+    st_hw_frame();
     for (int i = 0; i < 999; i++) st_read16(&c, 0x04000180);
     CHECK(!halted[0]);
     st_hw_frame();                                     /* un cuadro reinicia la cuenta */
@@ -60,6 +77,10 @@ int main(void) {
     st_read16(&c, 0x04000180);
     st_read16(&c, 0x04000180);
     CHECK(strstr(halted, "04000180") && strstr(halted, "IPCSYNC"));
+    halted[0] = 0;
+    st_hw_frame();                                     /* alternando dos registros también */
+    for (int i = 0; i < 1001; i++) st_read16(&c, i & 1 ? 0x04000180 : 0x04000184);
+    CHECK(halted[0]);
 
     printf(fails ? "hw: %d fallos\n" : "hw: OK\n", fails);
     return fails != 0;

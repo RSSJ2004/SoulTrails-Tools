@@ -28,6 +28,9 @@ static unsigned fifo_cnt = 0x0101u;       /* envío vacío | recepción vacía *
 static unsigned long pxi_logged;
 
 static uint32_t poll_addr, poll_count;
+static uint32_t vcount;                   /* línea simulada: avanza con cada lectura de VCOUNT/DISPSTAT */
+#define LINES 263u
+#define VBLANK_LINE 192u
 unsigned long st_hw_poll_limit = 2000000ul;
 
 int st_hw_ipcsync_echo = 1;
@@ -64,9 +67,25 @@ void st_hw_reset(void) {
     fifo_cnt = 0x0101u;
     poll_addr = poll_count = 0;
     pxi_logged = 0;
+    vcount = 0;
 }
 
-void st_hw_frame(void) { poll_count = 0; }
+void st_hw_frame(void) { poll_count = 0; vcount = 0; }
+
+/* Sin temporización real, cada lectura de VCOUNT/DISPSTAT avanza una línea. Al entrar en el
+ * VBlank se levanta su IRQ (si DISPSTAT la pide) y al dar la vuelta cuenta como un cuadro
+ * (st_platform.idle), así los bucles "espera a la línea N" o "espera al VBlank" terminan. */
+static void advance_line(StCpu* c) {
+    vcount++;
+    uint16_t stat;
+    memcpy(&stat, &io_regs[4], 2);
+    if (vcount == VBLANK_LINE && (stat & 0x8u)) st_raise_irq(ST_IRQ_VBLANK);
+    if (vcount == ((stat >> 8) | ((stat & 0x80u) << 1)) && (stat & 0x20u)) st_raise_irq(ST_IRQ_VCOUNT);
+    if (vcount >= LINES) {
+        vcount = 0;
+        if (!st_platform.idle(c)) st_platform.halt(c, "espera abortada por la plataforma");
+    }
+}
 
 void st_pxi_reply(uint32_t v) {
     if (fifo_rx_n == FIFO_LEN) { fifo_cnt |= 0x4000u; return; }   /* error: llena */
@@ -76,12 +95,14 @@ void st_pxi_reply(uint32_t v) {
     if (fifo_cnt & 0x0400u) st_raise_irq(ST_IRQ_FIFO_RECV);
 }
 
+/* Lecturas de E/S seguidas sin ninguna escritura ni cuadro: el juego espera algo que no llega
+ * (vale también para bucles que alternan varios registros). */
 static void watch_poll(StCpu* c, uint32_t addr) {
-    if (addr != poll_addr) { poll_addr = addr; poll_count = 0; return; }
+    poll_addr = addr;
     if (++poll_count < st_hw_poll_limit) return;
     char why[160];
     const char* n = io_name(addr);
-    snprintf(why, sizeof why, "bucle de espera sobre E/S %08X%s%s (falta emularlo en la plataforma)", addr,
+    snprintf(why, sizeof why, "bucle de espera sobre E/S (última lectura %08X%s%s; falta emularlo en la plataforma)", addr,
              *n ? " " : "", n);
     poll_count = 0;
     st_platform.halt(c, why);
@@ -89,8 +110,18 @@ static void watch_poll(StCpu* c, uint32_t addr) {
 
 /* Devuelve 1 si la dirección la gestiona este módulo. */
 int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
-    watch_poll(c, addr);
     uint32_t a = addr & ~3u;
+    if (a == 0x04000004u) {   /* DISPSTAT + VCOUNT: avanzan el tiempo, no cuentan como espera */
+        advance_line(c);
+        uint32_t stat = io_get(0x04000004u, 2) & 0xFFB8u;
+        uint32_t want = (stat >> 8) | ((stat & 0x80u) << 1);
+        stat |= (vcount >= VBLANK_LINE && vcount < LINES - 1) ? 1u : 0u;
+        stat |= vcount == want ? 4u : 0u;
+        uint32_t v = stat | (vcount << 16);
+        *out = (v >> ((addr & 3) * 8)) & (size == 4 ? 0xFFFFFFFFu : size == 2 ? 0xFFFFu : 0xFFu);
+        return 1;
+    }
+    watch_poll(c, addr);
     if (a == 0x04000180u) {
         uint32_t v = (io_get(0x04000180u, 4) & 0x4F00u) | (ipc_sync_arm7 & 0xFu);
         *out = v >> ((addr & 3) * 8);

@@ -457,10 +457,11 @@ def cmd_recomp(a) -> None:
             cmd = [str(exe), "--rom", cfg["rom"], "--misses", str(MISSES), "--max-frames", str(a.max_frames)]
             print(f"[learn {it}] $ {' '.join(cmd)}", flush=True)
             try:
-                p = subprocess.run(cmd, capture_output=True, text=True, timeout=a.timeout)
+                p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=a.timeout)
                 rc, log = p.returncode, (p.stdout + p.stderr)
             except subprocess.TimeoutExpired as e:
-                rc, log = -1, f"{e.stdout or ''}{e.stderr or ''}"
+                dec = (lambda b: b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or ""))
+                rc, log = -1, dec(e.stdout) + dec(e.stderr)
             tail = "\n".join(log.strip().splitlines()[-12:])
             if rc == 0:
                 print(f"[learn {it}] {PORT_EXIT[0]}")
