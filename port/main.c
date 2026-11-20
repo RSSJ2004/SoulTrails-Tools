@@ -61,12 +61,48 @@ static void dump_frame(void) {
     write_bmp(path, top, bottom);
 }
 
+/* Funciones más ejecutadas: en cada cuadro se suman las entradas del anillo de traza; al
+ * terminar se listan (dice en qué bucle está el juego aunque no se haya atascado) */
+#define HOT_N 4096
+static uint32_t hot_addr[HOT_N];
+static unsigned long hot_count[HOT_N];
+static uint32_t hot_last_pos;
+
+static void hot_sample(void) {
+    uint32_t pos = st_trace_pos, n = pos - hot_last_pos;
+    if (n > ST_TRACE_LEN) n = ST_TRACE_LEN;
+    for (uint32_t i = pos - n; i != pos; i++) {
+        uint32_t a = st_trace_ring[i & (ST_TRACE_LEN - 1)];
+        uint32_t h = (a * 2654435761u) >> 20;
+        for (uint32_t k = 0; k < HOT_N; k++) {
+            uint32_t j = (h + k) & (HOT_N - 1);
+            if (hot_addr[j] == a || !hot_addr[j]) { hot_addr[j] = a; hot_count[j]++; break; }
+        }
+    }
+    hot_last_pos = pos;
+}
+
+static void hot_report(void) {
+    fprintf(stderr, "[port] funciones más ejecutadas (muestras por cuadro):\n");
+    for (int r = 0; r < 25; r++) {
+        int best = -1;
+        for (int j = 0; j < HOT_N; j++)
+            if (hot_addr[j] && hot_count[j] && (best < 0 || hot_count[j] > hot_count[best])) best = j;
+        if (best < 0) break;
+        fprintf(stderr, "  %8lu  %08X %s\n", hot_count[best], hot_addr[best], st_symbol_for(hot_addr[best]));
+        hot_count[best] = 0;
+    }
+    fprintf(stderr, "[port] cambios de hilo: %lu, IRQ atendidas: %u\n", st_thread_switches, st_irq.served);
+}
+
 /* Cada espera del juego cuenta como un cuadro con su VBlank (sin ventana todavía) */
 static int on_idle(StCpu* c) {
     frames++;
+    hot_sample();
     if (dump_every && frames % dump_every == 0) dump_frame();
     if (max_frames && frames >= max_frames) {
         if (dump_every) dump_frame();
+        hot_report();
         printf("[port] %lu cuadros sin fallos\n", frames);
         exit(0);
     }

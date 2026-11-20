@@ -471,7 +471,16 @@ def cmd_recomp(a) -> None:
             (STATE_DIR / "last_run.txt").write_text(log, encoding="utf-8")
             tail = "\n".join(log.strip().splitlines()[-(100 if rc in (3, 5, 6) else 12):])
             if rc == 0:
+                (STATE_DIR / "last_run.txt").write_text(log, encoding="utf-8")
                 print(f"[learn {it}] {PORT_EXIT[0]}")
+                # Resumen: mensajes con el ARM7, hilos y funciones más ejecutadas
+                keep = [ln for ln in log.splitlines() if ln.startswith(("[arm7]", "[st] PXI", "[hilos]"))]
+                hot = log.split("[port] funciones más ejecutadas", 1)
+                for ln in keep[-30:]:
+                    print(ln)
+                if len(hot) > 1:
+                    print("[port] funciones más ejecutadas" + hot[1].rstrip())
+                print(f"(salida completa en {STATE_DIR / 'last_run.txt'})")
                 break
             new = [ln for ln in miss_lines() if ln not in before]
             if rc != 3 or not new:

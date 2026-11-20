@@ -209,6 +209,10 @@ pantalla del logo de Nintendo dibujada por `st_gpu2d.c` (correcta). Se quedaba a
 (0x04000130) devolvía 0 = todos los botones pulsados. Ahora vale 3FFh (suelto) y
 `st_input_set_keys(mask)` lo cambia; botones del ARM7 (X/Y/lápiz/bisagra) en 027FFFA8h = 007Fh
 (nada pulsado, abierta; dirección supuesta del SDK).
+Tras KEYINPUT: 1800 cuadros sin fallos, pero sigue en el logo de Nintendo (cuadros 660-900
+idénticos): espera algo en un bucle que sí pasa cuadros. Diagnóstico nuevo: al terminar, el port
+lista las funciones más ejecutadas (muestras del anillo de traza por cuadro), cambios de hilo e
+IRQ atendidas, y `stk --learn` resume las líneas `[arm7]`, `[st] PXI` y `[hilos]`.
 **Compilación incremental real**: archivos `rc_<módulo>_<rango 32 KB>.c` con sus propios
 prototipos; aprender una función solo recompila su archivo y los que la llaman.
 
