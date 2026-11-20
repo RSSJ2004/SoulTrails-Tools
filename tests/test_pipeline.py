@@ -79,5 +79,32 @@ class Pipeline(unittest.TestCase):
             self.assertIn("recomp", status)
 
 
+    def test_stk_learn(self):
+        """stk recomp --learn: cada vuelta ejecuta el port real, aprende un fallo y recompila."""
+        L = ROOT / "tests" / "learn"
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            fl = ["-mcpu=arm946e-s", "-marm", "-O2", "-ffreestanding", "-fno-builtin", "-I", d]
+            offs = [0, 0, 0]
+            for _ in range(2):   # 2 pasadas: la tabla de desplazamientos no cambia el tamaño
+                (d / "offsets.h").write_text("static const u32 offsets[3] = {%s};\n" % ",".join(map(str, offs)))
+                sh(ARMCC, *fl, "-c", L / "prog.c", "-o", d / "p.o")
+                sh(ARMCC, "-mcpu=arm946e-s", "-nostdlib", "-T", L / "link.ld", d / "p.o", "-lgcc", "-o", d / "p.elf")
+                syms = {l.split()[2]: int(l.split()[0], 16) for l in sh("arm-none-eabi-nm", d / "p.elf").splitlines()
+                        if len(l.split()) == 3}
+                offs = [syms[f] - 0x02000000 for f in ("f1", "f2", "f3")]
+            sh("arm-none-eabi-objcopy", "-O", "binary", d / "p.elf", d / "p.bin")
+            self.assertEqual(syms["entry"], 0x02000000)
+            (d / "game.nds").write_bytes(B.rom({"x.bin": bytes(16)}, arm9=(d / "p.bin").read_bytes()))
+            env = dict(os.environ, STK_HOME=str(d / "work"))
+            stk = [sys.executable, ROOT / "stk.py"]
+            sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
+            out = sh(*stk, "recomp", "--learn", "--max-frames", "10", env=env)
+            self.assertIn("terminó sin fallos", out, out)
+            self.assertIn("Aprendizaje: 3 direcciones nuevas", out, out)
+            misses = (d / "work" / ".stk" / "recomp_misses.txt").read_text().split("\n")
+            self.assertEqual([int(m.split()[0], 16) for m in misses if m], [syms[f] for f in ("f1", "f2", "f3")])
+
+
 if __name__ == "__main__":
     unittest.main()

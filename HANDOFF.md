@@ -29,7 +29,7 @@ Peticiones explícitas del usuario:
   debería mantener ese criterio o hablarlo con el usuario.
 
 ## Estado actual
-Todos los tests pasan (`python -m unittest discover -s tests` → 22 OK; además
+Todos los tests pasan (`python -m unittest discover -s tests` → 23 OK; además
 `frontend/build/layout_test` e `input_test`). **Nada se ha probado aún con la ROM real**: el usuario
 va a hacerlo.
 
@@ -57,12 +57,12 @@ frontend/              SDL2 + Dear ImGui 1.91.5 (FetchContent)
   input.*              InputMapper sin SDL: acciones, 3 asignaciones por acción, palanca→toque, gestos (tajo, giro, voltereta, tocar Link, tocar cursor), cursor con palanca derecha, micrófono, controls.ini
   main.cpp             app: pestañas Pantallas/Controles, "pulsa para asignar", mando con hotplug, lápiz virtual; ScreenSource = interfaz que implementará el juego (hoy TestPattern)
 ghidra_scripts/ExportFunctions.java  exporta {name, addr, size, block, thumb, c}
-tests/                 bios/ (bios.c, bios_thumb.c) + test_bios, boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + test_boot, cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
+tests/                 learn/ (prog.c para --learn), bios/ (bios.c, bios_thumb.c) + test_bios, boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + test_boot, cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
 ```
 
 ### Comandos de stk
 `init --rom X [--decomp Y]`, `doctor`, `setup` (descarga Ghidra, NTRGhidra, objdiff-cli),
-`rom`, `assets`, `recomp [--compile --hook ADDR --seeds F --scan-thumb]`,
+`rom`, `assets`, `recomp [--compile --learn --max-frames N --hook ADDR --seeds F --scan-thumb]`,
 `ghidra import|export|open`, `build`, `progress`, `next`, `loop`, `status`, `journal`, `task`.
 
 ## Decisiones de diseño
@@ -173,8 +173,12 @@ tests/                 bios/ (bios.c, bios_thumb.c) + test_bios, boot/ (crt0.S, 
      locales por función, plegar literales constantes de la ROM, eliminar cálculos de flags muertos.
 7. Tablas de saltos Thumb de MWCC (el compilador del juego): identificar su patrón con la ROM real
    y tratarlo como `TABLE` en lugar de depender del aprendizaje de fallos.
-8. Opción para reproducir el bucle de aprendizaje automáticamente (`stk recomp --learn` que lanza
-   el port, recoge `.stk/recomp_misses.txt` y recompila hasta que no haya fallos).
+8. ~~`stk recomp --learn`~~ **hecho**: recompila, compila `soultrails_port`, lo ejecuta con
+   `--max-frames` (cada espera del juego = 1 cuadro con su VBlank) y `--timeout`, y si sale con 3
+   y apuntó un fallo nuevo, recompila y repite (`--max-iter`). Se para y explica por qué cuando el
+   código de salida es otro o el fallo ya era conocido (típico: overlay no cargado porque falta
+   la capa de plataforma). Probado en `tests/test_pipeline.py::test_stk_learn` (3 funciones que
+   solo se alcanzan con direcciones calculadas).
 
 ### C. Assets
 1. NSBMD → glTF (geometría por display lists del GX, materiales, huesos), NSBCA/NSBTA/NSBTP →

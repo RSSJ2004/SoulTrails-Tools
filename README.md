@@ -77,6 +77,9 @@ Cómo funciona:
 - Binario estático, ITCM y cada overlay son módulos separados; las llamadas a otro overlay pasan
   por el despachador, que **elige el overlay comparando la memoria con una firma** de cada
   función (no hace falta saber dónde está `FS_LoadOverlay`).
+- **`stk recomp --learn`** hace el bucle solo: recompila, compila, ejecuta el port unos cuadros
+  (`--max-frames`), aprende la función que faltaba y repite hasta que no haya fallos nuevos;
+  si se para por otra causa (instrucción no soportada, falta la capa de plataforma) lo dice.
 - **Aprende de cada ejecución:** si el código salta a una dirección que no se tradujo, el runtime
   la apunta en `.stk/recomp_misses.txt` (con la firma de la memoria, para saber de qué overlay
   es); el siguiente `stk recomp` la incluye.

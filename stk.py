@@ -332,19 +332,14 @@ def cmd_assets(a) -> None:
 MISSES = STATE_DIR / "recomp_misses.txt"
 
 
-def cmd_recomp(a) -> None:
-    """Recompilación estática ARM/Thumb -> C de todo el código del juego."""
-    from sttools.nds import Rom
+def recomp_once(a, cfg, rom, out: Path) -> dict:
     from sttools.recomp import driver
-    cfg = config()
-    out = Path(a.out or HOME / "build" / "recomp").resolve()
-    rom = Rom.load(cfg["rom"])
     mods = driver.modules_from_rom(rom)
     seeds = [MISSES] + [Path(s) for s in a.seeds]
     ghidra = HOME / "ghidra_export" / "functions.jsonl"
+    nmiss = sum(1 for _ in MISSES.open()) if MISSES.exists() else 0
     print(f"Módulos: {len(mods)} (estático, ITCM/DTCM y overlays)")
-    print(f"Semillas: punto de entrada, {'Ghidra, ' if ghidra.exists() else ''}"
-          f"prólogos, punteros, {sum(1 for _ in MISSES.open()) if MISSES.exists() else 0} fallos aprendidos")
+    print(f"Semillas: punto de entrada, {'Ghidra, ' if ghidra.exists() else ''}prólogos, punteros, {nmiss} fallos aprendidos")
     t0 = time.time()
     res = driver.run(mods, out, rom.header["arm9_entry"], ghidra if ghidra.exists() else None, seeds,
                      scan=not a.no_scan, scan_thumb=a.scan_thumb, hooks={int(x, 16) for x in a.hook},
@@ -353,18 +348,74 @@ def cmd_recomp(a) -> None:
           f"{res['undefined']} no soportadas, {len(res['files'])} archivos C en {out} ({time.time() - t0:.0f}s)")
     for w in res["warnings"][:10]:
         print("  aviso:", w)
+    return res
+
+
+def port_build(out: Path) -> Path:
+    bdir = out.parent / "recomp-build"
+    gen = ["-G", "Ninja"] if shutil.which("ninja") and not (bdir / "CMakeCache.txt").exists() else []
+    run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", "-DCMAKE_BUILD_TYPE=Release", *gen])
+    run(["cmake", "--build", bdir, "--parallel"])
+    return bdir / ("soultrails_port.exe" if os.name == "nt" else "soultrails_port")
+
+
+PORT_EXIT = {0: "terminó sin fallos", 2: "error de uso o de ROM", 3: "función no traducida",
+             4: "instrucción no soportada", 5: "detenido (bkpt, espera abortada o falta la capa de plataforma)"}
+
+
+def miss_lines() -> list[str]:
+    return [ln.strip() for ln in MISSES.read_text(encoding="utf-8").splitlines() if ln.strip()] if MISSES.exists() else []
+
+
+def cmd_recomp(a) -> None:
+    """Recompilación estática ARM/Thumb -> C de todo el código del juego.
+    Con --learn repite: recompilar -> compilar -> ejecutar el port -> aprender el fallo."""
+    from sttools.nds import Rom
+    cfg = config()
+    out = Path(a.out or HOME / "build" / "recomp").resolve()
+    rom = Rom.load(cfg["rom"])
+    MISSES.parent.mkdir(parents=True, exist_ok=True)
+    res = recomp_once(a, cfg, rom, out)
     print(f"El runtime registra direcciones desconocidas en {MISSES}; vuelve a ejecutar `stk recomp` para incluirlas.")
-    if a.compile:
-        bdir = out.parent / "recomp-build"
-        run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", "-DCMAKE_BUILD_TYPE=Release"])
-        run(["cmake", "--build", bdir, "--parallel"])
-        exe = bdir / ("soultrails_port.exe" if os.name == "nt" else "soultrails_port")
-        print(f"El código recompilado compila correctamente ({bdir}).")
+    exe = None
+    if a.compile or a.learn:
+        exe = port_build(out)
+        print(f"El código recompilado compila correctamente ({exe.parent}).")
         print(f"Ejecutable: {exe} --rom {cfg['rom']} --misses {MISSES}")
+    learned = 0
+    if a.learn:
+        for it in range(1, a.max_iter + 1):
+            before = set(miss_lines())
+            cmd = [str(exe), "--rom", cfg["rom"], "--misses", str(MISSES), "--max-frames", str(a.max_frames)]
+            print(f"[learn {it}] $ {' '.join(cmd)}", flush=True)
+            try:
+                p = subprocess.run(cmd, capture_output=True, text=True, timeout=a.timeout)
+                rc, log = p.returncode, (p.stdout + p.stderr)
+            except subprocess.TimeoutExpired as e:
+                rc, log = -1, f"{e.stdout or ''}{e.stderr or ''}"
+            tail = "\n".join(log.strip().splitlines()[-3:])
+            if rc == 0:
+                print(f"[learn {it}] {PORT_EXIT[0]}")
+                break
+            new = [ln for ln in miss_lines() if ln not in before]
+            if rc != 3 or not new:
+                why = PORT_EXIT.get(rc, "tiempo agotado" if rc == -1 else f"código {rc}")
+                if rc == 3:
+                    why += " ya conocida (p. ej. overlay no cargado: falta la capa de plataforma)"
+                print(f"[learn {it}] se para: {why}\n{tail}")
+                break
+            learned += len(new)
+            print(f"[learn {it}] aprendido: {', '.join(new)}")
+            res = recomp_once(a, cfg, rom, out)
+            port_build(out)
+        else:
+            print(f"[learn] se alcanzó --max-iter {a.max_iter}")
+        print(f"Aprendizaje: {learned} direcciones nuevas, {res['functions']} funciones")
     st = state()
-    st["recomp"] = {"when": now(), "functions": res["functions"], "out": str(out)}
+    st["recomp"] = {"when": now(), "functions": res["functions"], "out": str(out), "learned": learned}
     save_state(st)
-    journal(f"recomp: {res['functions']} funciones, {res['undefined']} no soportadas")
+    journal(f"recomp: {res['functions']} funciones, {res['undefined']} no soportadas"
+            + (f", {learned} aprendidas" if a.learn else ""))
 
 
 # --------------------------------------------------------------------- ghidra
@@ -676,6 +727,11 @@ def main() -> None:
     s.add_argument("--hook", action="append", default=[], help="función a reemplazar en tiempo de ejecución (hex)")
     s.add_argument("--no-comments", action="store_true")
     s.add_argument("--compile", action="store_true", help="compila el resultado para verificarlo (necesita cmake)")
+    s.add_argument("--learn", action="store_true",
+                   help="repite recompilar -> ejecutar el port -> aprender fallos hasta que no haya más")
+    s.add_argument("--max-iter", type=int, default=50, help="máximo de vueltas de --learn")
+    s.add_argument("--max-frames", type=int, default=600, help="cuadros que se deja correr el port en cada vuelta")
+    s.add_argument("--timeout", type=int, default=120, help="segundos máximos por ejecución del port")
     s.set_defaults(fn=cmd_recomp)
 
     s = sub.add_parser("ghidra", help="import / export / open")
