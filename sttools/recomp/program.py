@@ -119,11 +119,22 @@ class Program:
             ins = arm.translate(addr, w)
             # "mov lr, pc" + salto indirecto (bx rX / ldr pc / mov pc) = llamada encubierta: el
             # destino vuelve a la instrucción siguiente (visto en el manejador de IRQ del SDK)
-            if (ins.kind == INDIRECT and "ST_INDIRECT(" in ins.code and ins.cond == 14
-                    and self.read(m, addr - 4, 4) == 0xE1A0E00F):
-                ins.code = ins.code.replace("ST_INDIRECT(", f"ST_CALL_DYN_EXPR({ins.next:#010x}u, ", 1)
-                ins.kind = NEXT
-                ins.asm += "  ; llamada (mov lr, pc)"
+            prev = self.read(m, addr - 4, 4)
+            # (no si el destino es el propio LR o un retorno de excepción: "ldr lr, =X; movs pc, lr")
+            if (ins.kind == INDIRECT and "ST_INDIRECT(" in ins.code and ins.cond == 14 and prev is not None
+                    and "c->r[14]" not in ins.code and "st_exception_return" not in ins.code):
+                if prev == 0xE1A0E00F:
+                    ins.code = ins.code.replace("ST_INDIRECT(", f"ST_CALL_DYN_EXPR({ins.next:#010x}u, ", 1)
+                    ins.kind = NEXT
+                    ins.asm += "  ; llamada (mov lr, pc)"
+                elif (prev & 0xFFFFF000) == 0xE59FE000:
+                    # "ldr lr, =X" + salto indirecto: llamada que vuelve a X (otra función; el
+                    # manejador de IRQ del SDK continúa así en su cambio de hilo)
+                    ret = self.read(m, addr - 4 + 8 + (prev & 0xFFF), 4)
+                    if ret is not None:
+                        ins.code = ins.code.replace("ST_INDIRECT(", "ST_CALL_THEN_RET(", 1)
+                        ins.target = ret
+                        ins.asm += f"  ; llamada que vuelve a {ret:#x}"
         self._cache[key] = ins
         return ins
 
@@ -191,6 +202,8 @@ class Program:
                     work.append(ea)
             elif ins.kind == CALL and ins.target is not None:
                 f.calls.add(ins.target)
+            elif ins.kind == INDIRECT and ins.target is not None:
+                f.calls.add(ins.target)   # vuelta de una llamada "ldr lr, =X"
             elif ins.kind == INDIRECT and is_thumb:
                 tg = self.thumb_table(m, a)
                 if tg:

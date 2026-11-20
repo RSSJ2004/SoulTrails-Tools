@@ -165,6 +165,13 @@ ITCM), que "volvía" a `01FFBDC8`: usa `mov lr, pc` + `bx rX` como llamada. El r
 lo traduce como llamada (`ST_CALL_DYN_EXPR`, `Program.decode`; prueba
 `tests/test_pipeline.py::HiddenCall`).
 
+Corrección tras `stk disasm 01FFBD90` (itcm): el manejador de IRQ del SDK no usa `mov lr, pc` sino
+`ldr lr, =01FFBDC8; bx r0`: llama al manejador de cada IRQ y al volver sigue en `01FFBDC8`, la
+rutina que revisa si hay que cambiar de hilo (guarda el contexto con `stmib r0!, {r2-r14}^`, llama a
+0202E530/0202E570 y carga el nuevo con `ldmib r1, {r0-r14}^`). Ahora `ldr lr, =X` + salto
+indirecto (salvo a LR o retorno de excepción) es `ST_CALL_THEN_RET` y X se siembra como función.
+Siguiente previsible: cambio de hilo real → fase 1.5 (fibras); 01FFBDC8 es el punto de enganche.
+
 **Fase 2 empezada (sin probar con la ROM)**: `runtime/st_vram.c` (bancos A-I con VRAMCNT: BG/OBJ
 de cada motor por páginas de 16 KB, LCDC, ranuras de texturas y paletas, paletas extendidas;
 `st_ptr` de 0x06 pasa por aquí) y `runtime/st_gpu2d.c` (motores 2D por software, cuadro entero:

@@ -157,3 +157,24 @@ class HiddenCall(unittest.TestCase):
             self.assertIn("terminó sin fallos", out, out)
             code = "".join(p.read_text() for p in (d / "work" / "build" / "recomp").glob("recomp_0*.c"))
             self.assertIn("ST_CALL_DYN_EXPR(0x02000010u", code)
+
+    def test_ldr_lr_bx(self):
+        """'ldr lr, =X' + 'bx rX': llamada que al volver sigue en X (manejador de IRQ del SDK)."""
+        arm9 = struct.pack("<10I", 0xE52DE004,      # str lr, [sp, #-4]!
+                           0xE59F0008,              # ldr r0, =func
+                           0xE59FE008,              # ldr lr, =after
+                           0xE12FFF10,              # bx r0
+                           0,
+                           0x0200001C, 0x02000024,
+                           0xE3A00007,              # func: mov r0, #7
+                           0xE12FFF1E,              # bx lr
+                           0xE49DF004)              # after: ldr pc, [sp], #4
+        rom = B.rom({}, arm9=arm9 + bytes(64))
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "game.nds").write_bytes(rom)
+            env = dict(os.environ, STK_HOME=str(d / "work"))
+            stk = [sys.executable, ROOT / "stk.py"]
+            sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
+            out = sh(*stk, "recomp", "--learn", "--timeout", "20", env=env)
+            self.assertIn("terminó sin fallos", out, out)

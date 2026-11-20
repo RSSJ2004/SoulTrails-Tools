@@ -269,6 +269,8 @@ extern volatile uint32_t st_trace_pos;
 #define ST_CALL(fn, ret) do { fn(c); if (c->next_pc != (ret)) { ST_TAIL_DYN(c->next_pc); } } while (0)
 /* Llamada por "mov lr, pc" + salto indirecto: argumento 1 = vuelta, 2 = destino */
 #define ST_CALL_DYN_EXPR(ret, a) do { uint32_t t_ = (a); st_call(c, t_); if (c->next_pc != (ret)) { ST_TAIL_DYN(c->next_pc); } } while (0)
+/* Llamada cuyo LR se cargó con otra dirección: al volver se sigue donde diga next_pc */
+#define ST_CALL_THEN_RET(a) do { uint32_t t_ = (a); st_call(c, t_); ST_TAIL_DYN(c->next_pc); } while (0)
 #define ST_CALL_DYN(a, ret) do { st_call(c, (a)); if (c->next_pc != (ret)) { ST_TAIL_DYN(c->next_pc); } } while (0)
 
 #ifdef __cplusplus
