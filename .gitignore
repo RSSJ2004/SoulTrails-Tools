@@ -7,3 +7,4 @@ work/
 tools_bin/
 frontend/build/
 __pycache__/
+build/

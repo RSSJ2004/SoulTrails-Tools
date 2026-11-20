@@ -4,13 +4,16 @@ project(soultrails_frontend CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_library(st_layout STATIC src/layout.cpp)
+add_library(st_layout STATIC src/layout.cpp src/input.cpp)
 target_include_directories(st_layout PUBLIC src)
 
 enable_testing()
 add_executable(layout_test tests/layout_test.cpp)
 target_link_libraries(layout_test PRIVATE st_layout)
 add_test(NAME layout_test COMMAND layout_test)
+add_executable(input_test tests/input_test.cpp)
+target_link_libraries(input_test PRIVATE st_layout)
+add_test(NAME input_test COMMAND input_test)
 
 option(ST_BUILD_FRONTEND "Compila la app SDL2 + ImGui" ON)
 if(ST_BUILD_FRONTEND)

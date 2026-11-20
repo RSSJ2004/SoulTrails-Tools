@@ -53,6 +53,9 @@ Layout ComputeLayout(const LayoutConfig& cfg, int windowW, int windowH);
 // inferior (0..255, 0..191). Devuelve false si cae fuera.
 bool WindowToTouch(const Layout& l, float wx, float wy, int* tx, int* ty);
 
+// Inverso: coordenadas táctiles -> punto en la ventana (para dibujar el lápiz virtual).
+bool TouchToWindow(const Layout& l, float tx, float ty, float* wx, float* wy);
+
 // Persistencia en un .ini sencillo.
 bool LoadConfig(const std::string& path, LayoutConfig* cfg);
 bool SaveConfig(const std::string& path, const LayoutConfig& cfg);

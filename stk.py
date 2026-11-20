@@ -9,8 +9,9 @@ Uso rápido:
     python stk.py init --decomp ../SoulTrails --rom ruta/a/tu.nds
     python stk.py doctor
     python stk.py setup            # descarga Ghidra, NTRGhidra y objdiff-cli
-    python stk.py rom info
-    python stk.py rom extract      # saca NitroFS a assets/
+    python stk.py rom              # información de la ROM
+    python stk.py assets           # extrae y convierte assets a assets/
+    python stk.py recomp           # recompilación estática a C (build/recomp)
     python stk.py ghidra import    # importa y analiza la ROM (una vez)
     python stk.py ghidra export    # exporta pseudo-C de todas las funciones
     python stk.py build            # configure.py + ninja en el repo decomp
@@ -40,13 +41,15 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-STATE_DIR = ROOT / ".stk"
+# Carpeta de trabajo (estado, assets, build...). Por defecto, junto a stk.py.
+HOME = Path(os.environ.get("STK_HOME", ROOT)).resolve()
+STATE_DIR = HOME / ".stk"
 CONFIG_FILE = STATE_DIR / "config.json"
 STATE_FILE = STATE_DIR / "state.json"
 JOURNAL_FILE = STATE_DIR / "journal.md"
 HISTORY_FILE = STATE_DIR / "progress_history.jsonl"
-TOOLS_DIR = ROOT / "tools_bin"
-WORK_DIR = ROOT / "work"
+TOOLS_DIR = HOME / "tools_bin"
+WORK_DIR = HOME / "work"
 GHIDRA_SCRIPTS = ROOT / "ghidra_scripts"
 
 # SHA1 de las ROMs soportadas por la decomp (públicos en su README).
@@ -147,9 +150,9 @@ def exe(name: str) -> str:
 
 # ----------------------------------------------------------------------- init
 def cmd_init(a) -> None:
-    decomp = Path(a.decomp).resolve()
+    decomp = Path(a.decomp).resolve() if a.decomp else None
     rom = Path(a.rom).resolve()
-    if not (decomp / "tools" / "configure.py").exists():
+    if decomp and not (decomp / "tools" / "configure.py").exists():
         sys.exit(f"{decomp} no parece el repo de la decomp (falta tools/configure.py)")
     if not rom.exists():
         sys.exit(f"No existe la ROM: {rom}")
@@ -159,7 +162,7 @@ def cmd_init(a) -> None:
         print(f"AVISO: SHA1 {digest} no coincide con ninguna ROM soportada.")
         version = a.version or "eur"
     cfg = load_json(CONFIG_FILE, {})
-    cfg.update({"decomp": str(decomp), "rom": str(rom), "rom_sha1": digest, "version": a.version or version})
+    cfg.update({"decomp": str(decomp) if decomp else None, "rom": str(rom), "rom_sha1": digest, "version": a.version or version})
     save_json(CONFIG_FILE, cfg)
     journal(f"init: decomp={decomp} rom={rom.name} version={cfg['version']}")
     print(json.dumps(cfg, indent=2))
@@ -209,7 +212,7 @@ def cmd_doctor(a) -> None:
     if cfg:
         check("ROM existe", Path(cfg["rom"]).exists(), "revisa la ruta de la ROM")
         check(f"ROM reconocida ({cfg['version']})", cfg["rom_sha1"] in KNOWN_ROMS, "usa una ROM limpia")
-        d = Path(cfg["decomp"])
+        d = Path(cfg["decomp"] or ".")
         check("baserom copiada en extract/", any((d / "extract").glob("*.nds")), "python stk.py build la copia")
         check("objdiff.json generado", (d / "objdiff.json").exists(), "python stk.py build")
     print("\nTodo listo." if ok else "\nFaltan cosas (ver arriba).")
@@ -289,96 +292,75 @@ def cmd_setup(a) -> None:
 
 
 # ------------------------------------------------------------------------ rom
-def read_header(f) -> dict:
-    f.seek(0)
-    h = f.read(0x200)
-    u32 = lambda o: struct.unpack_from("<I", h, o)[0]
-    return {
-        "title": h[0:12].rstrip(b"\0").decode("ascii", "replace"),
-        "gamecode": h[12:16].decode("ascii", "replace"),
-        "arm9_off": u32(0x20), "arm9_entry": u32(0x24), "arm9_ram": u32(0x28), "arm9_size": u32(0x2C),
-        "arm7_off": u32(0x30), "arm7_entry": u32(0x34), "arm7_ram": u32(0x38), "arm7_size": u32(0x3C),
-        "fnt_off": u32(0x40), "fnt_size": u32(0x44), "fat_off": u32(0x48), "fat_size": u32(0x4C),
-        "ovt9_off": u32(0x50), "ovt9_size": u32(0x54), "ovt7_off": u32(0x58), "ovt7_size": u32(0x5C),
-    }
-
-
-def walk_fnt(f, fnt_off: int):
-    """Devuelve [(ruta, file_id)] del sistema de archivos NitroFS."""
-    def entry(dir_id):
-        f.seek(fnt_off + (dir_id & 0xFFF) * 8)
-        sub_off, first_id, _ = struct.unpack("<IHH", f.read(8))
-        return sub_off, first_id
-
-    out = []
-
-    def walk(dir_id, prefix):
-        sub_off, fid = entry(dir_id)
-        pos = fnt_off + sub_off
-        while True:
-            f.seek(pos)
-            t = f.read(1)[0]
-            if t == 0:
-                break
-            ln = t & 0x7F
-            name = f.read(ln).decode("latin-1")
-            pos += 1 + ln
-            if t & 0x80:
-                f.seek(pos)
-                sub = struct.unpack("<H", f.read(2))[0]
-                pos += 2
-                walk(sub, f"{prefix}{name}/")
-            else:
-                out.append((prefix + name, fid))
-                fid += 1
-
-    walk(0xF000, "")
-    return out
+sys.path.insert(0, str(ROOT))
 
 
 def cmd_rom(a) -> None:
+    """Información de la ROM."""
+    from sttools.nds import Rom
     cfg = config()
-    rom = Path(cfg["rom"])
-    with rom.open("rb") as f:
-        h = read_header(f)
-        if a.action == "info":
-            for k, v in h.items():
-                print(f"  {k:12} {hex(v) if isinstance(v, int) else v}")
-            print(f"  overlays ARM9: {h['ovt9_size'] // 32}")
-            print(f"  archivos NitroFS: {len(walk_fnt(f, h['fnt_off']))}")
-            return
-        out = Path(a.out or ROOT / "assets").resolve()
-        files = walk_fnt(f, h["fnt_off"])
-        n = 0
-        for path, fid in files:
-            f.seek(h["fat_off"] + fid * 8)
-            start, end = struct.unpack("<II", f.read(8))
-            dest = out / "data" / path
-            if dest.exists() and dest.stat().st_size == end - start and not a.force:
-                continue
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            f.seek(start)
-            dest.write_bytes(f.read(end - start))
-            n += 1
-        # binarios y overlays
-        for name, off, size in (("arm9.bin", h["arm9_off"], h["arm9_size"]), ("arm7.bin", h["arm7_off"], h["arm7_size"])):
-            f.seek(off)
-            (out / name).write_bytes(f.read(size))
-        ovdir = out / "overlays"
-        ovdir.mkdir(parents=True, exist_ok=True)
-        ovt = []
-        for i in range(h["ovt9_size"] // 32):
-            f.seek(h["ovt9_off"] + i * 32)
-            ov_id, ram, size, bss, sinit_s, sinit_e, file_id, flags = struct.unpack("<8I", f.read(32))
-            f.seek(h["fat_off"] + file_id * 8)
-            start, end = struct.unpack("<II", f.read(8))
-            f.seek(start)
-            (ovdir / f"ov{ov_id:03d}.bin").write_bytes(f.read(end - start))
-            ovt.append({"id": ov_id, "ram": hex(ram), "size": size, "bss": bss, "compressed": bool(flags & 0x01000000)})
-        save_json(out / "overlays.json", ovt)
-    print(f"Extraídos {n} archivos nuevos de NitroFS + arm9/arm7 + {len(ovt)} overlays en {out}")
-    print("Nota: arm9 y los overlays marcados 'compressed' están en BLZ; Ghidra/NTRGhidra los descomprime.")
-    journal(f"rom extract -> {out} ({n} archivos)")
+    rom = Rom.load(cfg["rom"])
+    for k, v in rom.header.items():
+        print(f"  {k:12} {hex(v) if isinstance(v, int) else v}")
+    print(f"  overlays ARM9: {len(rom.overlays9())}")
+    print(f"  archivos NitroFS: {len(rom.files())}")
+    mp = rom.arm9_module_params()
+    if mp:
+        print(f"  ARM9 comprimido: {'sí' if mp['compressed_static_end'] else 'no'}  SDK: {mp['sdk_version']:#x}")
+        for s in rom.arm9_segments():
+            print(f"  segmento {s.name:8} {s.base:#010x}  {len(s.data):8} bytes")
+
+
+def cmd_assets(a) -> None:
+    """Extrae y convierte todos los assets (ver sttools/assets.py)."""
+    from sttools.assets import extract
+    cfg = config()
+    out = Path(a.out or HOME / "assets").resolve()
+    print(f"Extrayendo assets de {Path(cfg['rom']).name} a {out} ...")
+    t0 = time.time()
+    s = extract(cfg["rom"], out, convert=not a.raw_only, verbose=a.verbose)
+    print(f"Listo en {time.time() - t0:.0f}s: {s['files_in_rom']} archivos en la ROM")
+    for k, v in s["types"].items():
+        print(f"  {k:10} {v}")
+    print(f"Errores: {s['errors']}  (detalle en {out / 'report.txt'})")
+    journal(f"assets -> {out}: {s['types']} errores={s['errors']}")
+
+
+# -------------------------------------------------------------------- recomp
+MISSES = STATE_DIR / "recomp_misses.txt"
+
+
+def cmd_recomp(a) -> None:
+    """Recompilación estática ARM/Thumb -> C de todo el código del juego."""
+    from sttools.nds import Rom
+    from sttools.recomp import driver
+    cfg = config()
+    out = Path(a.out or HOME / "build" / "recomp").resolve()
+    rom = Rom.load(cfg["rom"])
+    mods = driver.modules_from_rom(rom)
+    seeds = [MISSES] + [Path(s) for s in a.seeds]
+    ghidra = HOME / "ghidra_export" / "functions.jsonl"
+    print(f"Módulos: {len(mods)} (estático, ITCM/DTCM y overlays)")
+    print(f"Semillas: punto de entrada, {'Ghidra, ' if ghidra.exists() else ''}"
+          f"prólogos, punteros, {sum(1 for _ in MISSES.open()) if MISSES.exists() else 0} fallos aprendidos")
+    t0 = time.time()
+    res = driver.run(mods, out, rom.header["arm9_entry"], ghidra if ghidra.exists() else None, seeds,
+                     scan=not a.no_scan, scan_thumb=a.scan_thumb, hooks={int(x, 16) for x in a.hook},
+                     comments=not a.no_comments)
+    print(f"{res['functions']} funciones, {res['instructions']} instrucciones, "
+          f"{res['undefined']} no soportadas, {len(res['files'])} archivos C en {out} ({time.time() - t0:.0f}s)")
+    for w in res["warnings"][:10]:
+        print("  aviso:", w)
+    print(f"El runtime registra direcciones desconocidas en {MISSES}; vuelve a ejecutar `stk recomp` para incluirlas.")
+    if a.compile:
+        bdir = out.parent / "recomp-build"
+        run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", "-DCMAKE_BUILD_TYPE=Release"])
+        run(["cmake", "--build", bdir, "--parallel"])
+        print(f"El código recompilado compila correctamente ({bdir}).")
+    st = state()
+    st["recomp"] = {"when": now(), "functions": res["functions"], "out": str(out)}
+    save_state(st)
+    journal(f"recomp: {res['functions']} funciones, {res['undefined']} no soportadas")
 
 
 # --------------------------------------------------------------------- ghidra
@@ -396,7 +378,7 @@ def cmd_ghidra(a) -> None:
     head = ghidra_headless()
     name = f"st_{cfg['version']}"
     exists = (proj_dir / f"{name}.gpr").exists()
-    out = ROOT / "ghidra_export"
+    out = HOME / "ghidra_export"
     out.mkdir(exist_ok=True)
 
     if a.action == "import":
@@ -424,7 +406,7 @@ def cmd_ghidra(a) -> None:
 
 
 def ghidra_index() -> dict[int, dict]:
-    idx = ROOT / "ghidra_export" / "functions.jsonl"
+    idx = HOME / "ghidra_export" / "functions.jsonl"
     out = {}
     if idx.exists():
         for line in idx.open(encoding="utf-8"):
@@ -583,9 +565,9 @@ def cmd_next(a) -> None:
         ]
         if not path.exists() or a.force:
             path.write_text("\n".join(lines), encoding="utf-8")
-        st["tasks"][key] = {"status": "in_progress", "file": str(path.relative_to(ROOT)), "created": now(),
+        st["tasks"][key] = {"status": "in_progress", "file": str(path.relative_to(HOME)), "created": now(),
                             "size": size, "match": pct}
-        print(f"  ficha: {path.relative_to(ROOT)}  ({size} B, {pct:.1f}%)")
+        print(f"  ficha: {path.relative_to(HOME)}  ({size} B, {pct:.1f}%)")
         made += 1
     save_state(st)
     journal(f"next: {made} fichas nuevas")
@@ -663,7 +645,7 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("init", help="configura rutas del repo decomp y la ROM")
-    s.add_argument("--decomp", required=True)
+    s.add_argument("--decomp", help="repo de la decomp (opcional: solo para build/progress/next/loop)")
     s.add_argument("--rom", required=True)
     s.add_argument("--version", choices=["jp", "eur", "eur1", "usa"])
     s.set_defaults(fn=cmd_init)
@@ -674,11 +656,23 @@ def main() -> None:
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_setup)
 
-    s = sub.add_parser("rom", help="info / extract de la ROM")
-    s.add_argument("action", choices=["info", "extract"])
-    s.add_argument("--out")
-    s.add_argument("--force", action="store_true")
-    s.set_defaults(fn=cmd_rom)
+    sub.add_parser("rom", help="información de la ROM").set_defaults(fn=cmd_rom)
+
+    s = sub.add_parser("assets", help="extrae y convierte todos los assets")
+    s.add_argument("--out", help="carpeta de salida (por defecto assets/)")
+    s.add_argument("--raw-only", action="store_true", help="solo extraer, sin convertir")
+    s.add_argument("--verbose", action="store_true")
+    s.set_defaults(fn=cmd_assets)
+
+    s = sub.add_parser("recomp", help="recompilación estática del código a C")
+    s.add_argument("--out", help="carpeta de salida (por defecto build/recomp)")
+    s.add_argument("--seeds", action="append", default=[], help="archivo extra de direcciones")
+    s.add_argument("--no-scan", action="store_true", help="no buscar prólogos de función")
+    s.add_argument("--scan-thumb", action="store_true", help="buscar también prólogos Thumb")
+    s.add_argument("--hook", action="append", default=[], help="función a reemplazar en tiempo de ejecución (hex)")
+    s.add_argument("--no-comments", action="store_true")
+    s.add_argument("--compile", action="store_true", help="compila el resultado para verificarlo (necesita cmake)")
+    s.set_defaults(fn=cmd_recomp)
 
     s = sub.add_parser("ghidra", help="import / export / open")
     s.add_argument("action", choices=["import", "export", "open"])

@@ -137,6 +137,22 @@ bool WindowToTouch(const Layout& l, float wx, float wy, int* tx, int* ty) {
     return true;
 }
 
+bool TouchToWindow(const Layout& l, float tx, float ty, float* wx, float* wy) {
+    const ScreenRect& s = l.bottom;
+    if (!s.visible) return false;
+    float ux = tx / kScreenW * s.w - s.w / 2, uy = ty / kScreenH * s.h - s.h / 2;
+    float dx = ux, dy = uy;
+    switch (s.angle) {  // rotación horaria
+        case 90: dx = -uy; dy = ux; break;
+        case 180: dx = -ux; dy = -uy; break;
+        case 270: dx = uy; dy = -ux; break;
+        default: break;
+    }
+    *wx = s.cx + dx;
+    *wy = s.cy + dy;
+    return true;
+}
+
 bool SaveConfig(const std::string& path, const LayoutConfig& c) {
     std::ofstream f(path);
     if (!f) return false;

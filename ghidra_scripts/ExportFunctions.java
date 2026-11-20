@@ -9,6 +9,8 @@ import ghidra.app.script.GhidraScript;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.lang.Register;
+import java.math.BigInteger;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -55,6 +57,12 @@ public class ExportFunctions extends GhidraScript {
                 Function f = it.next();
                 if (f.isExternal() || f.isThunk()) continue;
                 MemoryBlock blk = currentProgram.getMemory().getBlock(f.getEntryPoint());
+                boolean thumb = false;
+                Register tm = currentProgram.getRegister("TMode");
+                if (tm != null) {
+                    BigInteger v = currentProgram.getProgramContext().getValue(tm, f.getEntryPoint(), false);
+                    thumb = v != null && v.intValue() == 1;
+                }
                 String c = "";
                 DecompileResults r = dec.decompileFunction(f, timeout, monitor);
                 if (r != null && r.decompileCompleted() && r.getDecompiledFunction() != null) {
@@ -63,7 +71,7 @@ public class ExportFunctions extends GhidraScript {
                 w.write("{\"name\":\"" + esc(f.getName()) + "\",\"addr\":\"0x"
                         + Long.toHexString(f.getEntryPoint().getOffset()) + "\",\"size\":"
                         + f.getBody().getNumAddresses() + ",\"block\":\""
-                        + esc(blk != null ? blk.getName() : "") + "\",\"c\":\"" + esc(c) + "\"}\n");
+                        + esc(blk != null ? blk.getName() : "") + "\",\"thumb\":" + thumb + ",\"c\":\"" + esc(c) + "\"}\n");
                 n++;
                 monitor.incrementProgress(1);
             }
