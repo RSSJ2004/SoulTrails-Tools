@@ -469,7 +469,7 @@ def cmd_recomp(a) -> None:
                 dec = (lambda b: b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or ""))
                 rc, log = -1, dec(e.stdout) + dec(e.stderr)
             (STATE_DIR / "last_run.txt").write_text(log, encoding="utf-8")
-            tail = "\n".join(log.strip().splitlines()[-(90 if rc == 6 else 12):])
+            tail = "\n".join(log.strip().splitlines()[-(100 if rc in (3, 5, 6) else 12):])
             if rc == 0:
                 print(f"[learn {it}] {PORT_EXIT[0]}")
                 break

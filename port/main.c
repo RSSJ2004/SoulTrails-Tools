@@ -75,7 +75,17 @@ static int on_idle(StCpu* c) {
     return 1;
 }
 
+static void dump_trace(void) {
+    fprintf(stderr, "[port] últimas funciones (la más reciente al final):\n");
+    uint32_t pos = st_trace_pos, n = pos < ST_TRACE_LEN ? pos : ST_TRACE_LEN;
+    for (uint32_t i = pos - n; i != pos; i++) {
+        uint32_t a = st_trace_ring[i & (ST_TRACE_LEN - 1)];
+        fprintf(stderr, "  %08X %s\n", a, st_symbol_for(a));
+    }
+}
+
 static void on_miss(StCpu* c, uint32_t addr) {
+    dump_trace();
     fprintf(stderr, "[port] función no traducida en %08X (LR=%08X)\n", addr, c->r[14]);
     exit(3);
 }
@@ -85,6 +95,7 @@ static void on_unimpl(StCpu* c, uint32_t addr, uint32_t insn, int thumb) {
     exit(4);
 }
 static void on_halt(StCpu* c, const char* why) {
+    dump_trace();
     fprintf(stderr, "[port] detenido: %s (PC~%08X LR=%08X)\n", why, c->next_pc, c->r[14]);
     exit(5);
 }
