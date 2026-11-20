@@ -356,7 +356,9 @@ def cmd_recomp(a) -> None:
         bdir = out.parent / "recomp-build"
         run(["cmake", "-S", ROOT / "port", "-B", bdir, f"-DST_RECOMP_DIR={out}", "-DCMAKE_BUILD_TYPE=Release"])
         run(["cmake", "--build", bdir, "--parallel"])
+        exe = bdir / ("soultrails_port.exe" if os.name == "nt" else "soultrails_port")
         print(f"El código recompilado compila correctamente ({bdir}).")
+        print(f"Ejecutable: {exe} --rom {cfg['rom']} --misses {MISSES}")
     st = state()
     st["recomp"] = {"when": now(), "functions": res["functions"], "out": str(out)}
     save_state(st)

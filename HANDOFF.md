@@ -29,7 +29,7 @@ Peticiones explícitas del usuario:
   debería mantener ese criterio o hablarlo con el usuario.
 
 ## Estado actual
-Todos los tests pasan (`python -m unittest discover -s tests` → 19 OK; además
+Todos los tests pasan (`python -m unittest discover -s tests` → 20 OK; además
 `frontend/build/layout_test` e `input_test`). **Nada se ha probado aún con la ROM real**: el usuario
 va a hacerlo.
 
@@ -47,20 +47,42 @@ sttools/recomp/        recompilador estático
   program.py           módulos, descubrimiento (semillas, llamadas, prólogos ARM, escaneo de punteros con filtro "sin instrucciones indefinidas"), tablas addls pc,pc
   codegen.py           una función C por función guest; goto para saltos internos, ST_CALL directo si el destino se resuelve (mismo módulo o estático), si no por el despachador; switch de despacho para saltos indirectos
   driver.py            entrada (--rom o --bin), semillas de Ghidra/archivos/fallos
+runtime/st_rom.[ch]    lector de ROM y arranque (st_boot_run)
+port/main.c            ejecutable soultrails_port --rom X --misses F
 runtime/strecomp.[ch]  StCpu, mapa de memoria DS (RAM 4MB, ITCM, DTCM dinámica vía CP15, WRAM, paleta, VRAM, OAM), st_call/despachador, st_override (reemplazos nativos), overlays cargados, registro de fallos, StPlatform (callbacks IO/SWI/unimpl/miss)
-port/CMakeLists.txt    compila runtime + build/recomp (solo biblioteca por ahora)
+port/CMakeLists.txt    compila runtime + build/recomp + soultrails_port
 frontend/              SDL2 + Dear ImGui 1.91.5 (FetchContent)
   layout.*             cálculo de layout (vertical/horizontal/grande+pequeña/una), rotación, escala entera, WindowToTouch/TouchToWindow, layout.ini
   input.*              InputMapper sin SDL: acciones, 3 asignaciones por acción, palanca→toque, gestos (tajo, giro, voltereta, tocar Link, tocar cursor), cursor con palanca derecha, micrófono, controls.ini
   main.cpp             app: pestañas Pantallas/Controles, "pulsa para asignar", mando con hotplug, lápiz virtual; ScreenSource = interfaz que implementará el juego (hoy TestPattern)
 ghidra_scripts/ExportFunctions.java  exporta {name, addr, size, block, thumb, c}
-tests/                 cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
+tests/                 boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + test_boot, cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
 ```
 
 ### Comandos de stk
 `init --rom X [--decomp Y]`, `doctor`, `setup` (descarga Ghidra, NTRGhidra, objdiff-cli),
 `rom`, `assets`, `recomp [--compile --hook ADDR --seeds F --scan-thumb]`,
 `ghidra import|export|open`, `build`, `progress`, `next`, `loop`, `status`, `journal`, `task`.
+
+## Decisiones de diseño
+1. **El port lee la ROM del usuario en tiempo de ejecución** (`soultrails_port --rom juego.nds`),
+   como N64Recomp: no se empaqueta nada del juego en el ejecutable salvo el código traducido
+   (que ya se genera en local). Arranque "como el hardware": cabecera en `0x027FFE00`, ARM9 **tal
+   cual está en el cartucho** (comprimido con BLZ) en `arm9_ram`, modo SVC con IRQ/FIQ
+   desactivadas, y se llama a la entrada. El **crt0 del propio juego** (recompilado) hace la
+   descompresión, los autoloads (ITCM/DTCM), el BSS y los constructores estáticos. Así no hay
+   que replicar a mano lo que hace el SDK y se valida a la vez la detección de ModuleParams.
+   Lo que el BIOS/firmware deja en `0x027FF800-0x027FFFFF` (IDs de cartucho, ajustes de usuario)
+   queda pendiente para la capa de plataforma.
+2. **Overlays detectados por contenido, sin enganchar funciones del SDK.** Cada función de un
+   overlay guarda en su tabla una firma (FNV-1a de sus primeros 32 bytes según la ROM). Cuando
+   `st_call` cae en una dirección que cubren varios overlays (o uno solo), elige el que coincide
+   con lo que hay en memoria en ese momento; si ninguno coincide es un fallo (overlay no cargado).
+   El juego carga, descomprime y ejecuta los `sinit` de sus overlays él solo (en cuanto la
+   plataforma emule las lecturas de cartucho), y no hace falta conocer la dirección de
+   `FS_LoadOverlay`. `st_overlay_set_loaded()` se mantiene como indicación forzada (gana sobre la
+   firma) por si algún hook la necesita. Las llamadas directas dentro del mismo overlay no
+   pasan por el despachador (si se está ejecutando ese overlay, está cargado).
 
 ## Qué agregar / reparar (por prioridad)
 
@@ -80,10 +102,25 @@ tests/                 cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) 
    `metadata.virtual_address`) y ajustar `stk progress/next`.
 
 ### B. Recompilador
-1. **Ejecutable que arranca**: cargar segmentos (estático, ITCM, overlays) en memoria con
-   `st_load`, poner SP/modo, llamar a la entrada ARM9. Requiere la capa de plataforma (C).
-2. **Overlays**: detectar carga/descarga (hook de las funciones FS_LoadOverlay/FS_UnloadOverlay del
-   SDK con `st_override`) y llamar a `st_overlay_set_loaded`; ejecutar los `sinit` de cada overlay.
+1. ~~**Ejecutable que arranca**~~ **hecho** (decisión de diseño 1): `runtime/st_rom.[ch]` (lector de
+   ROM: cabecera, FAT, tabla de overlays; `st_boot_run`) y `port/main.c` → `soultrails_port --rom
+   X --misses F` (códigos de salida: 0 vuelve, 2 ROM, 3 función no traducida, 4 instrucción no
+   soportada, 5 detenido). `tests/test_boot.py` arranca una ROM sintética con crt0 propio,
+   ModuleParams, ARM9 comprimido (lo descomprime el código invitado), autoload ITCM, BSS y dos
+   overlays en la misma dirección; también ejecuta el `soultrails_port` real.
+   Pendiente: estado que deja el BIOS/firmware en `0x027FF800+`; la capa de plataforma (C/E).
+   - El código generado es una biblioteca CMake OBJECT (el runtime necesita `st_modules` y con
+     dos estáticas el orden de enlazado fallaba).
+   - Lección (vale para la ROM real): el código que se ejecuta **antes** de descomprimir (crt0 y
+     descompresor) lee sus literales de la RAM aún comprimida; en el SDK está en la cabecera sin
+     comprimir, así que funciona, pero si `stk rom` muestra un `compressed_static_end` raro, revisar
+     esto primero.
+2. ~~**Overlays**~~ **hecho** (decisión de diseño 2): firma FNV-1a de 32 bytes en `StFnEntry.sig`;
+   `lookup()` elige por contenido. Los fallos se registran como `ADDR arm|thumb sig=XXXXXXXX` y el
+   recompilador los asigna al overlay cuya firma coincide (`Program.candidates`); los punteros y
+   llamadas hacia overlays desde otros módulos ahora también se siguen (antes se perdían porque
+   `module_for` solo mira residentes). Nota para `--learn`: un fallo en una dirección que ya está
+   traducida en otro overlay significa "overlay no cargado", no algo nuevo que aprender.
 3. **ARM7**: no se recompila. Lo normal es HLE: emular por IPC/FIFO lo que hace el ARM7 (sonido,
    táctil, RTC, micrófono, Wi-Fi no).
 4. Interrupciones/VBlank: `SWI WaitByLoop/IntrWait/VBlankIntrWait` deben ceder al frontend y

@@ -41,6 +41,19 @@ class Function:
         return f"{prefix}{self.addr:08X}{'_t' if self.thumb else ''}"
 
 
+SIG_BYTES = 32  # = ST_SIG_BYTES en runtime/strecomp.h
+
+
+def signature_at(m: Module, addr: int, n: int = SIG_BYTES) -> int:
+    """FNV-1a de n bytes desde addr (igual que st_signature del runtime)."""
+    o = addr - m.base
+    hv = 2166136261
+    chunk = m.data[o:o + n]
+    for b in chunk + bytes(n - len(chunk)):
+        hv = ((hv ^ b) * 16777619) & 0xFFFFFFFF
+    return hv
+
+
 class Program:
     def __init__(self, modules: list[Module], max_insns_per_function: int = 20000):
         self.modules = modules
@@ -60,6 +73,23 @@ class Program:
             if m.overlay is None and m.contains(addr):
                 return m
         return None
+
+    def overlays_at(self, addr: int) -> list[Module]:
+        return [m for m in self.modules if m.overlay is not None and m.contains(addr)]
+
+    def candidates(self, addr: int, is_thumb: bool, sig: int | None = None) -> list[Module]:
+        """Módulos donde puede estar 'addr': el residente si lo hay; si no, los overlays cuya
+        firma coincide con 'sig' (fallos registrados por el runtime) o, sin firma, aquellos
+        en los que el código es plausible."""
+        m = self.module_for(addr)
+        if m is not None:
+            return [m]
+        ovs = self.overlays_at(addr)
+        if sig is not None:
+            hit = [o for o in ovs if signature_at(o, addr) == sig]
+            if hit:
+                return hit
+        return [o for o in ovs if self.plausible(o, addr, is_thumb)]
 
     @staticmethod
     def read(m: Module, addr: int, size: int) -> int | None:
@@ -208,6 +238,7 @@ class Program:
         """Palabras alineadas fuera del código conocido que apuntan a código decodificable."""
         out = []
         resident = [(x.base, x.end, x) for x in self.modules if x.overlay is None]
+        overlays = [x for x in self.modules if x.overlay is not None]
         for m in self.modules:
             d = m.data
             name, mbase, mend = m.name, m.base, m.end
@@ -216,15 +247,20 @@ class Program:
             for i, v in enumerate(words):
                 tgt, th = v & ~1, bool(v & 1)
                 if mbase <= tgt < mend:
-                    mm = m
+                    mms = (m,)
                 else:
                     mm = next((x for b, e, x in resident if b <= tgt < e), None)
-                    if mm is None:
-                        continue
-                if (not th and tgt & 3) or (mm.name, tgt) in starts or (name, mbase + 4 * i) in code:
+                    if mm is not None:
+                        mms = (mm,)
+                    else:  # puntero a un overlay desde otro módulo: probar los que lo cubren
+                        mms = tuple(x for x in overlays if x.base <= tgt < x.end and x is not m)
+                        if not mms:
+                            continue
+                if (not th and tgt & 3) or (name, mbase + 4 * i) in code:
                     continue
-                if self.plausible(mm, tgt, th):
-                    out.append((tgt, th, mm))
+                for mm in mms:
+                    if (mm.name, tgt) not in starts and self.plausible(mm, tgt, th):
+                        out.append((tgt, th, mm))
         return out
 
     def _fixpoint(self, queue, starts, code) -> None:
@@ -233,6 +269,10 @@ class Program:
             addr &= ~1
             m = mod if (mod and mod.contains(addr)) else self.module_for(addr)
             if m is None:
+                # Llamada a otro overlay (p. ej. de un overlay a otro cargado a la vez)
+                for o in self.overlays_at(addr):
+                    if o is not mod and (o.name, addr) not in starts and self.plausible(o, addr, is_thumb):
+                        queue.append((addr | int(is_thumb), is_thumb, o))
                 continue
             key = (m.name, addr)
             if key in starts:

@@ -27,22 +27,25 @@ def modules_from_rom(rom: Rom) -> list[Module]:
     return mods
 
 
-def parse_seed_line(line: str) -> tuple[int, bool, str | None] | None:
-    """Formatos: '02001234 thumb', '0x02001234', '02001234 arm ov012'."""
+def parse_seed_line(line: str) -> tuple[int, bool, str | None, int | None] | None:
+    """Formatos: '02001234 thumb', '0x02001234', '02001234 arm ov012',
+    '02200000 arm sig=1A2B3C4D' (fallo del runtime con la firma de la memoria)."""
     parts = line.split("#")[0].split()
     if not parts:
         return None
     addr = int(parts[0], 16)
     thumb = bool(addr & 1)
-    mod = None
+    mod = sig = None
     for p in parts[1:]:
         if p.lower() in ("thumb", "t"):
             thumb = True
         elif p.lower() in ("arm", "a"):
             thumb = False
+        elif p.lower().startswith("sig="):
+            sig = int(p[4:], 16)
         else:
             mod = p
-    return addr & ~1, thumb, mod
+    return addr & ~1, thumb, mod, sig
 
 
 def collect_seeds(prog: Program, entry: int | None, ghidra: Path | None, seed_files: list[Path],
@@ -66,8 +69,13 @@ def collect_seeds(prog: Program, entry: int | None, ghidra: Path | None, seed_fi
             continue
         for line in sf.read_text(encoding="utf-8").splitlines():
             s = parse_seed_line(line)
-            if s:
-                seeds.append((s[0], s[1], by_name.get(s[2]) if s[2] else None))
+            if not s:
+                continue
+            addr, thumb, mod, sig = s
+            if mod:
+                seeds.append((addr, thumb, by_name.get(mod)))
+            else:  # puede estar en uno o varios overlays
+                seeds += [(addr, thumb, m) for m in prog.candidates(addr, thumb, sig)]
     if scan:
         for m in prog.modules:
             for a, t, mm in prog.scan_prologues(m):

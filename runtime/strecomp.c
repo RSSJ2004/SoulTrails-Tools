@@ -158,15 +158,38 @@ static const StFnEntry* find_in(const StModule* m, uint32_t addr) {
     return (lo < m->count && m->fns[lo].addr == addr) ? &m->fns[lo] : NULL;
 }
 
+uint32_t st_signature(uint32_t addr, uint32_t end) {
+    uint32_t n = end - addr < ST_SIG_BYTES ? end - addr : ST_SIG_BYTES;
+    uint32_t h = 2166136261u;
+    const uint8_t* p = st_ptr(addr, n);
+    for (uint32_t i = 0; i < n; i++) {
+        h ^= p ? p[i] : 0u;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+/* Resuelve una dirección a una función traducida. Los módulos residentes (estático, ITCM)
+ * ganan; entre overlays, primero el marcado a mano con st_overlay_set_loaded y si no el que
+ * coincide con la memoria (ver HANDOFF.md, "Decisiones de diseño"). */
 static const StFnEntry* lookup(uint32_t addr, const StModule** mod) {
+    const StFnEntry* by_sig = NULL;
+    const StModule* sig_mod = NULL;
+    uint32_t mem_sig = 0;
+    int have_sig = 0;
     for (unsigned i = 0; i < st_module_count; i++) {
         const StModule* m = &st_modules[i];
         if (addr < m->start || addr >= m->end) continue;
-        if (m->overlay >= 0 && !st_overlay_is_loaded(m->overlay)) continue;
         const StFnEntry* e = find_in(m, addr);
-        if (e) { if (mod) *mod = m; return e; }
+        if (!e) continue;
+        if (m->overlay < 0 || st_overlay_is_loaded(m->overlay)) { if (mod) *mod = m; return e; }
+        if (by_sig) continue;
+        if (!have_sig) { mem_sig = st_signature(addr, m->end); have_sig = 1; }
+        if (e->sig == mem_sig) { by_sig = e; sig_mod = m; }
+        else have_sig = 0;   /* otro overlay puede acabar en otro sitio: recalcular */
     }
-    return NULL;
+    if (by_sig && mod) *mod = sig_mod;
+    return by_sig;
 }
 
 void st_set_miss_log(const char* path) {
@@ -181,7 +204,9 @@ void st_call(StCpu* c, uint32_t target) {
     const StFnEntry* e = lookup(addr, NULL);
     if (e) { e->fn(c); return; }
     if (miss_log) {
-        fprintf(miss_log, "%08X %s\n", addr, (target & 1) ? "thumb" : "arm");
+        /* La firma deja que el recompilador sepa qué overlay estaba cargado */
+        fprintf(miss_log, "%08X %s sig=%08X\n", addr, (target & 1) ? "thumb" : "arm",
+                st_signature(addr, addr + ST_SIG_BYTES));
         fflush(miss_log);
     }
     st_platform.miss(c, target);

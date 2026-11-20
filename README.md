@@ -57,7 +57,16 @@ python stk.py ghidra import && python stk.py ghidra export   # opcional, mejora 
 python stk.py recomp --compile
 ```
 
-Genera `build/recomp/*.c` (código traducido de **tu** ROM, no se sube) y comprueba que compila.
+Genera `build/recomp/*.c` (código traducido de **tu** ROM, no se sube), comprueba que compila y
+crea el ejecutable `soultrails_port`, que **lee tu ROM al arrancar**:
+
+```bash
+build/recomp-build/soultrails_port --rom /ruta/a/tu_rom.nds --misses .stk/recomp_misses.txt
+```
+
+Arranca como el hardware (ARM9 tal cual está en el cartucho y el crt0 del juego hace la
+descompresión, los autoloads y el BSS). Sin la capa de plataforma, el juego avanza hasta lo
+primero que la necesite.
 
 Cómo funciona:
 - Cada función ARM o Thumb pasa a una función C que opera sobre `StCpu` (registros y flags) y
@@ -66,9 +75,11 @@ Cómo funciona:
   los prólogos `stmdb sp!, {..., lr}`, los punteros a código guardados en datos y **los fallos
   aprendidos**.
 - Binario estático, ITCM y cada overlay son módulos separados; las llamadas a otro overlay pasan
-  por el despachador, que sabe cuáles están cargados.
+  por el despachador, que **elige el overlay comparando la memoria con una firma** de cada
+  función (no hace falta saber dónde está `FS_LoadOverlay`).
 - **Aprende de cada ejecución:** si el código salta a una dirección que no se tradujo, el runtime
-  la apunta en `.stk/recomp_misses.txt`; el siguiente `stk recomp` la incluye.
+  la apunta en `.stk/recomp_misses.txt` (con la firma de la memoria, para saber de qué overlay
+  es); el siguiente `stk recomp` la incluye.
 - `--hook <dir>` + `st_override()` permiten **sustituir funciones del juego por código nativo**
   (gráficos, sonido, archivos…). Ahí se conectará la capa de plataforma.
 

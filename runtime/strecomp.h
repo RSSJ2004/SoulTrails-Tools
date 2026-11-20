@@ -33,7 +33,10 @@ typedef struct StCpu {
 
 typedef void (*StFn)(StCpu*);
 
-typedef struct { uint32_t addr; uint32_t thumb; StFn fn; } StFnEntry;
+/* sig: FNV-1a de los primeros bytes de la función (ST_SIG_BYTES, sin pasar del final del
+ * módulo) tal como están en la ROM; solo se usa en overlays para saber cuál está cargado. */
+typedef struct { uint32_t addr; uint32_t thumb; StFn fn; uint32_t sig; } StFnEntry;
+#define ST_SIG_BYTES 32u
 typedef struct {
     const char* name;
     int overlay;              /* -1 = siempre residente */
@@ -86,8 +89,11 @@ int st_load(uint32_t addr, const void* data, size_t size);  /* copia datos a mem
 void st_init(StCpu* c);
 void st_call(StCpu* c, uint32_t addr);
 void st_override(uint32_t addr, StFn fn);           /* sustituye una función del juego */
+/* Indicación forzada de overlay cargado (gana sobre la firma); loaded=0 la quita. */
 void st_overlay_set_loaded(int id, int loaded);
 int st_overlay_is_loaded(int id);
+/* ¿El contenido de la memoria coincide con este overlay en esa función? */
+uint32_t st_signature(uint32_t addr, uint32_t end);
 const char* st_symbol_for(uint32_t addr);           /* "módulo:función" para depurar */
 
 /* Registro de direcciones no encontradas: se usan como semillas en el siguiente

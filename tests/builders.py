@@ -61,8 +61,8 @@ def lz11_compress(data: bytes) -> bytes:
     return bytes(out)
 
 
-def blz_compress(data: bytes) -> bytes:
-    """Compresor BLZ voraz (procesa al revés). Solo para tests."""
+def _blz_stream(data: bytes) -> bytes:
+    """Compresión BLZ voraz de 'data' entera (sin prefijo sin comprimir)."""
     rev = data[::-1]
     stream = bytearray()  # en orden de lectura del descompresor
     i = 0
@@ -84,11 +84,52 @@ def blz_compress(data: bytes) -> bytes:
     comp = bytes(stream[::-1])
     pad = (-len(comp)) % 4
     hdr_len = 8 + pad
-    enc_len = len(comp) + hdr_len
-    total = len(comp) + hdr_len
-    inc = len(data) - total
-    assert inc > 0, "datos poco comprimibles para el test"
-    return comp + b"\xff" * pad + struct.pack("<II", (hdr_len << 24) | enc_len, inc)
+    return comp + b"\xff" * pad + struct.pack("<II", (hdr_len << 24) | (len(comp) + hdr_len), 0)
+
+
+def blz_inplace(buf: bytearray, end: int) -> bool:
+    """Descomprime en el sitio como el SDK (MIi_UncompressBackward) y dice si la salida
+    nunca pisó entrada aún sin leer."""
+    hdr, inc = struct.unpack_from("<II", buf, end - 8)
+    src, dst, stop = end - (hdr >> 24), end + inc, end - (hdr & 0xFFFFFF)
+    while dst > stop:
+        src -= 1
+        flags = buf[src]
+        for _ in range(8):
+            if dst <= stop:
+                break
+            if flags & 0x80:
+                src -= 2
+                pr = buf[src] | buf[src + 1] << 8
+                ln, disp = (pr >> 12) + 3, (pr & 0xFFF) + 3
+                while ln and dst > stop:
+                    dst -= 1
+                    buf[dst] = buf[dst + disp]
+                    ln -= 1
+            else:
+                dst -= 1
+                src -= 1
+                buf[dst] = buf[src]
+            if dst < src:
+                return False
+            flags = (flags << 1) & 0xFF
+    return True
+
+
+def blz_compress(data: bytes) -> bytes:
+    """Compresor BLZ para tests. Como los compresores reales, deja sin comprimir el prefijo
+    mínimo (múltiplo de 4) para que la descompresión en el sitio sea segura."""
+    for k in range(0, len(data), 4):
+        body = _blz_stream(data[k:])
+        inc = len(data) - k - len(body)
+        if inc <= 0:
+            break
+        out = bytearray(data[:k] + body)
+        struct.pack_into("<I", out, len(out) - 4, inc)
+        sim = bytearray(out) + bytearray(inc)
+        if blz_inplace(sim, len(out)) and bytes(sim[:len(data)]) == data:
+            return bytes(out)
+    raise AssertionError("datos poco comprimibles para el test")
 
 
 # --------------------------------------------------------------- contenedores

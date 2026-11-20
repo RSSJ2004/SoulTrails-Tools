@@ -4,12 +4,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from .insn import BRANCH, CALL, COND_C, TABLE, UNDEF, h
-from .program import Function, Program
+from .program import SIG_BYTES, Function, Program, signature_at
 
 HEADER = """/* Generado por stk recomp. NO EDITAR y NO SUBIR al repositorio:
  * contiene código traducido de tu ROM. */
 #include "strecomp.h"
 """
+
+
+def signature(f: Function) -> int:
+    """Firma de la función recortada al final del módulo (como lookup() en el runtime)."""
+    return signature_at(f.module, f.addr, min(SIG_BYTES, f.module.end - f.addr))
 
 
 def label(addr: int) -> str:
@@ -128,7 +133,8 @@ class Generator:
                 continue
             tbl.append(f"static const StFnEntry fns_{m.name}[] = {{")
             for f in fs:
-                tbl.append(f"    {{ {h(f.addr)}, {int(f.thumb)}, {f.cname} }},")
+                sig = h(signature(f)) if m.overlay is not None else "0"
+                tbl.append(f"    {{ {h(f.addr)}, {int(f.thumb)}, {f.cname}, {sig} }},")
             tbl.append("};")
             mods.append(f"    {{ \"{m.name}\", {m.overlay if m.overlay is not None else -1}, {h(m.base)}, {h(m.end)},"
                         f" fns_{m.name}, {len(fs)} }},")
@@ -141,7 +147,7 @@ class Generator:
         (out_dir / "CMakeLists.txt").write_text(
             "# Generado por stk recomp\n"
             "file(GLOB ST_RECOMP_SOURCES ${CMAKE_CURRENT_LIST_DIR}/*.c)\n"
-            "add_library(st_recomp_generated STATIC ${ST_RECOMP_SOURCES})\n"
+            "add_library(st_recomp_generated OBJECT ${ST_RECOMP_SOURCES})\n"
             "target_include_directories(st_recomp_generated PUBLIC ${CMAKE_CURRENT_LIST_DIR})\n"
             "target_link_libraries(st_recomp_generated PUBLIC st_runtime)\n"
             "if(NOT MSVC)\n  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -fno-strict-aliasing)\nendif()\n",
