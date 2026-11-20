@@ -58,7 +58,7 @@ if(ST_MELONDS)
   add_subdirectory(${melonds_SOURCE_DIR} ${melonds_BINARY_DIR} EXCLUDE_FROM_ALL)
   if(MSVC)   # clang-cl: melonDS solo se compila oficialmente con GCC/Clang de MinGW en Windows
     target_compile_definitions(core PRIVATE strncasecmp=_strnicmp strcasecmp=_stricmp _CRT_SECURE_NO_WARNINGS
-                               _USE_MATH_DEFINES)
+                               _USE_MATH_DEFINES __WIN32__)   # __WIN32__: lo que define MinGW (sha1.c: endianness)
     target_include_directories(core PRIVATE ${CMAKE_CURRENT_LIST_DIR}/melon/compat)
     target_compile_options(core PRIVATE -Wno-deprecated-declarations -Wno-unused-command-line-argument
                            -Wno-vla-cxx-extension)
