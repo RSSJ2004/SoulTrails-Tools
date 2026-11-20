@@ -57,6 +57,28 @@ class Codegen(unittest.TestCase):
                                        capture_output=True, text=True)
                     self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_cross_file_call_declared(self):
+        """Una llamada directa a una función de otro archivo (otro rango de 32 KB) lleva su
+        prototipo: clang/C99 rechaza las declaraciones implícitas (clang-cl en Windows)."""
+        far = 0x10000
+        bl = 0xEB000000 | (((far - 4 - 8) >> 2) & 0xFFFFFF)   # bl en 0x04
+        data = bytearray(far + 8)
+        struct.pack_into("<3I", data, 0, 0xE92D4010, bl, 0xE8BD8010)   # push; bl far; pop
+        struct.pack_into("<I", data, far, 0xE12FFF1E)                   # far: bx lr
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            p = Program([Module("main", BASE, bytes(data))])
+            p.discover([(BASE, False, None)], pointer_scan=False)
+            Generator(p).write(out)
+            first = (out / "rc_main_02000000.c").read_text()
+            self.assertIn("ST_CALLR(f_02010000,", first)
+            self.assertIn("void f_02010000(StCpu* c);", first)
+            if CC:
+                r = subprocess.run([CC, "-std=c11", "-fsyntax-only", "-Werror=implicit-function-declaration",
+                                    "-I", str(ROOT / "runtime"), "-I", str(out), str(out / "rc_main_02000000.c")],
+                                   capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_unchanged_files_not_rewritten(self):
         with tempfile.TemporaryDirectory() as d:
             out = Path(d)

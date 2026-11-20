@@ -19,6 +19,9 @@ def signature(f: Function) -> int:
     return signature_at(f.module, f.addr, min(SIG_BYTES, f.module.end - f.addr))
 
 
+FN_NAME = re.compile(r"\bf_(?:[A-Za-z]+[0-9]*_)?[0-9A-F]{8}(?:_t)?\b")
+
+
 def label(addr: int) -> str:
     return f"L_{addr:08X}"
 
@@ -190,7 +193,8 @@ class Generator:
         for (mname, b), chunk in sorted(groups.items()):
             path = out_dir / f"rc_{mname}_{b * bucket:08X}.c"
             code = [self.emit_function(f) + "\n" for f in chunk]
-            used = sorted(set(re.findall(r"\b(f_[0-9A-Za-z_]+)\(", "".join(code))))
+            # Toda referencia a una función generada (también como argumento de ST_CALL/ST_TAIL)
+            used = sorted(set(FN_NAME.findall("".join(code))))
             body = [HEADER] + [f"void {n}(StCpu* c);" for n in used] + [""] + code
             write_if_changed(path, "\n".join(body))
             files.append(path.name)
@@ -230,7 +234,8 @@ class Generator:
             "target_link_libraries(st_recomp_generated PUBLIC st_runtime)\n"
             "if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL \"Clang\")\n"
             "  # clang-cl (port híbrido con melonDS): sin /MP (Ninja ya compila en paralelo)\n"
-            "  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -Wno-unused-variable)\n"
+            "  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -Wno-unused-variable\n"
+            "                         -Werror=implicit-function-declaration)\n"
             "elseif(MSVC)\n"
             "  # /MP: compila los .c en paralelo, limitado por la RAM (cada cl.exe con /O2 sobre estos\n"
             "  # archivos puede usar ~1,5 GB; sin límite, 16 hilos con 16 GB acaban en el archivo de paginación).\n"
@@ -241,7 +246,8 @@ class Generator:
             "  if(st_jobs GREATER st_cores)\n    set(st_jobs ${st_cores})\n  endif()\n"
             "  if(st_jobs LESS 1)\n    set(st_jobs 1)\n  endif()\n"
             "  target_compile_options(st_recomp_generated PRIVATE /MP${st_jobs} /bigobj /wd4102)\n"
-            "else()\n  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -fno-strict-aliasing)\nendif()\n")
+            "else()\n  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -fno-strict-aliasing\n"
+            "                         -Werror=implicit-function-declaration)\nendif()\n")
         ninsn = sum(len(f.insns) for f in funcs)
         undef = sorted({(f.module.name, a, i.raw, f.thumb) for f in funcs for a, i in f.insns.items() if i.kind == UNDEF})
         nundef = len(undef)
