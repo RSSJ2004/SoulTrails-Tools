@@ -81,7 +81,17 @@ static void thread_main(int i) {
         if (c->next_pc == pc || !c->next_pc) break;
         pc = c->next_pc;
     }
-    st_platform.halt(c, "un hilo del juego terminó sin cambiar a otro");
+    char why[160];
+    snprintf(why, sizeof why, "un hilo del juego terminó sin cambiar a otro (fibra %d, empezó en %08X, "
+             "vuelve a %08X)", i, fibers[i].start_pc, c->next_pc);
+    st_platform.halt(c, why);
+}
+
+static unsigned long logged;
+static void log_switch(const char* what, int t, uint32_t pc, uint32_t sp, uint32_t old_sp, uint32_t raw_old) {
+    if (logged++ >= 48) return;
+    fprintf(stderr, "[hilos] %s fibra %d -> %d: PC %08X pila %08X (saliente: pila %08X, en el cambio %08X)\n", what,
+            cur, t, pc, sp, old_sp, raw_old);
 }
 
 #ifdef _WIN32
@@ -140,6 +150,7 @@ static void switch_native(int to) {
 int st_thread_switch(StCpu* c, uint32_t target_pc, uint32_t target_sp, uint32_t old_sp) {
     /* El hilo saliente se reconocerá por la pila que quedó en su contexto guardado (puede
      * diferir de la actual si el SDK apiló algo entre SaveContext y LoadContext) */
+    uint32_t raw_old = old_sp;
     if (saved_sp_valid) { old_sp = saved_sp; saved_sp_valid = 0; }
     if (target_sp == old_sp) return 0;
     g_cpu = c;
@@ -159,6 +170,7 @@ int st_thread_switch(StCpu* c, uint32_t target_pc, uint32_t target_sp, uint32_t 
         fibers[t].resume_pc = target_pc;
         st_fiber_resumed = 1;
     }
+    log_switch(st_fiber_resumed ? "reanuda" : "nuevo hilo", t, target_pc, target_sp, old_sp, raw_old);
     fibers[cur].suspended = 1;
     fibers[cur].sp = old_sp;
     fibers[t].suspended = 0;
