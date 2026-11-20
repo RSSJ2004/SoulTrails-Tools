@@ -57,9 +57,11 @@ if(ST_MELONDS)
   set(ENABLE_LTO_RELEASE OFF CACHE BOOL "" FORCE)
   add_subdirectory(${melonds_SOURCE_DIR} ${melonds_BINARY_DIR} EXCLUDE_FROM_ALL)
   if(MSVC)   # clang-cl: melonDS solo se compila oficialmente con GCC/Clang de MinGW en Windows
-    target_compile_definitions(core PRIVATE strncasecmp=_strnicmp strcasecmp=_stricmp _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(core PRIVATE strncasecmp=_strnicmp strcasecmp=_stricmp _CRT_SECURE_NO_WARNINGS
+                               _USE_MATH_DEFINES)
     target_include_directories(core PRIVATE ${CMAKE_CURRENT_LIST_DIR}/melon/compat)
-    target_compile_options(core PRIVATE -Wno-deprecated-declarations -Wno-unused-command-line-argument)
+    target_compile_options(core PRIVATE -Wno-deprecated-declarations -Wno-unused-command-line-argument
+                           -Wno-vla-cxx-extension)
     target_compile_options(teakra PRIVATE -Wno-unused-command-line-argument)
   endif()
   add_executable(soultrails_port ${CMAKE_CURRENT_LIST_DIR}/main.c ${CMAKE_CURRENT_LIST_DIR}/melon/st_melon.cpp
