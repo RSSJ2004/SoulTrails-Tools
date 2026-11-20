@@ -5,7 +5,7 @@ import struct
 from dataclasses import dataclass, field
 
 from . import arm, jumptable, thumb
-from .insn import BRANCH, CALL, INDIRECT, TABLE, UNDEF, Ins
+from .insn import BRANCH, CALL, INDIRECT, NEXT, TABLE, UNDEF, Ins
 
 
 @dataclass
@@ -117,6 +117,13 @@ class Program:
             if w is None:
                 return None
             ins = arm.translate(addr, w)
+            # "mov lr, pc" + salto indirecto (bx rX / ldr pc / mov pc) = llamada encubierta: el
+            # destino vuelve a la instrucción siguiente (visto en el manejador de IRQ del SDK)
+            if (ins.kind == INDIRECT and "ST_INDIRECT(" in ins.code and ins.cond == 14
+                    and self.read(m, addr - 4, 4) == 0xE1A0E00F):
+                ins.code = ins.code.replace("ST_INDIRECT(", f"ST_CALL_DYN_EXPR({ins.next:#010x}u, ", 1)
+                ins.kind = NEXT
+                ins.asm += "  ; llamada (mov lr, pc)"
         self._cache[key] = ins
         return ins
 

@@ -160,6 +160,11 @@ RTC escribe la fecha del PC en BCD en 27FFDE8h (dirección supuesta). Y **IRQ en
 atrás** (`ST_POLL` en bucles del código generado): una espera activa sobre un flag que pone un
 callback de IRQ no llama a nadie. Ranura GBA: lecturas a 0 sin avisos repetidos.
 
+**Primera IRQ real**: la respuesta del RTC llega y se entra en el manejador de IRQ del SDK (en
+ITCM), que "volvía" a `01FFBDC8`: usa `mov lr, pc` + `bx rX` como llamada. El recompilador ahora
+lo traduce como llamada (`ST_CALL_DYN_EXPR`, `Program.decode`; prueba
+`tests/test_pipeline.py::HiddenCall`).
+
 **Fase 2 empezada (sin probar con la ROM)**: `runtime/st_vram.c` (bancos A-I con VRAMCNT: BG/OBJ
 de cada motor por páginas de 16 KB, LCDC, ranuras de texturas y paletas, paletas extendidas;
 `st_ptr` de 0x06 pasa por aquí) y `runtime/st_gpu2d.c` (motores 2D por software, cuadro entero:
