@@ -90,6 +90,9 @@ Cómo funciona:
 - **Aprende de cada ejecución:** si el código salta a una dirección que no se tradujo, el runtime
   la apunta en `.stk/recomp_misses.txt` (con la firma de la memoria, para saber de qué overlay
   es); el siguiente `stk recomp` la incluye.
+- **Símbolos del decomp**: si configuraste `--decomp` y tienes objdiff-cli (`stk setup`), cada
+  `stk recomp` genera el informe de objdiff y usa sus nombres y direcciones de función como
+  semillas (`.stk/decomp_symbols.txt`; solo metadatos). `--no-decomp` lo desactiva.
 - `--hook <dir>` + `st_override()` permiten **sustituir funciones del juego por código nativo**
   (gráficos, sonido, archivos…). Ahí se conectará la capa de plataforma.
 
@@ -139,6 +142,9 @@ python -m unittest discover -s tests   # assets, recomp (necesita arm-none-eabi-
 ```
 
 ## Pendiente
+
+Plan completo: [`docs/PLAN.md`](docs/PLAN.md).
+
 
 - Capa de plataforma: GPU 2D/3D, sonido, archivos y BIOS sobre la API de hooks del runtime.
 - Posición de Link para el control por palanca (lectura de memoria del juego).

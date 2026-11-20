@@ -85,7 +85,9 @@ class Generator:
         if has_indirect:
             targets.update(addrs)
         tbit = 1 if f.thumb else 0
-        out = [f"/* {f.module.name} {f.addr:#010x} {'Thumb' if f.thumb else 'ARM'}, {len(addrs)} instr. */",
+        sym = self.prog.names.get((f.module.name, f.addr))
+        sym = f" {sym.replace('*/', '')}" if sym else ""
+        out = [f"/* {f.module.name} {f.addr:#010x} {'Thumb' if f.thumb else 'ARM'}, {len(addrs)} instr.{sym} */",
                f"void {f.cname}(StCpu* c) {{"]
         if has_indirect:
             out.append("    uint32_t jt;")
@@ -185,9 +187,15 @@ class Generator:
             "target_include_directories(st_recomp_generated PUBLIC ${CMAKE_CURRENT_LIST_DIR})\n"
             "target_link_libraries(st_recomp_generated PUBLIC st_runtime)\n"
             "if(MSVC)\n"
-            "  # /MP: compila los .c en paralelo; /bigobj: muchas funciones por archivo;\n"
-            "  # C4102: etiqueta sin usar (normal en el código generado)\n"
-            "  target_compile_options(st_recomp_generated PRIVATE /MP /bigobj /wd4102)\n"
+            "  # /MP: compila los .c en paralelo, limitado por la RAM (cada cl.exe con /O2 sobre estos\n"
+            "  # archivos puede usar ~1,5 GB; sin límite, 16 hilos con 16 GB acaban en el archivo de paginación).\n"
+            "  # /bigobj: muchas funciones por archivo; C4102: etiqueta sin usar (normal aquí).\n"
+            "  cmake_host_system_information(RESULT st_mem QUERY TOTAL_PHYSICAL_MEMORY)\n"
+            "  cmake_host_system_information(RESULT st_cores QUERY NUMBER_OF_LOGICAL_CORES)\n"
+            "  math(EXPR st_jobs \"${st_mem} / 1500\")\n"
+            "  if(st_jobs GREATER st_cores)\n    set(st_jobs ${st_cores})\n  endif()\n"
+            "  if(st_jobs LESS 1)\n    set(st_jobs 1)\n  endif()\n"
+            "  target_compile_options(st_recomp_generated PRIVATE /MP${st_jobs} /bigobj /wd4102)\n"
             "else()\n  target_compile_options(st_recomp_generated PRIVATE -Wno-unused-label -fno-strict-aliasing)\nendif()\n")
         ninsn = sum(len(f.insns) for f in funcs)
         undef = sorted({(f.module.name, a, i.raw, f.thumb) for f in funcs for a, i in f.insns.items() if i.kind == UNDEF})

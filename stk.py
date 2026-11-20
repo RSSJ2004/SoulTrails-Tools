@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import struct
 import subprocess
@@ -342,12 +343,15 @@ def cmd_assets(a) -> None:
 # -------------------------------------------------------------------- recomp
 MISSES = STATE_DIR / "recomp_misses.txt"
 WARNINGS = STATE_DIR / "recomp_warnings.txt"
+DECOMP_SYMBOLS = STATE_DIR / "decomp_symbols.txt"
 
 
 def recomp_once(a, cfg, rom, out: Path) -> dict:
     from sttools.recomp import driver
     mods = driver.modules_from_rom(rom)
     seeds = [MISSES] + [Path(s) for s in a.seeds]
+    if not getattr(a, "no_decomp", False) and decomp_symbols(cfg):
+        seeds.append(DECOMP_SYMBOLS)
     ghidra = HOME / "ghidra_export" / "functions.jsonl"
     nmiss = sum(1 for _ in MISSES.open()) if MISSES.exists() else 0
     print(f"Módulos: {len(mods)} (estático, ITCM/DTCM y overlays)")
@@ -356,6 +360,8 @@ def recomp_once(a, cfg, rom, out: Path) -> dict:
     res = driver.run(mods, out, rom.header["arm9_entry"], ghidra if ghidra.exists() else None, seeds,
                      scan=not a.no_scan, scan_thumb=a.scan_thumb, hooks={int(x, 16) for x in a.hook},
                      comments=not a.no_comments)
+    if res.get("named"):
+        print(f"  {res['named']} funciones con nombre del decomp (objdiff)")
     print(f"{res['functions']} funciones, {res['instructions']} instrucciones, "
           f"{res['undefined']} no soportadas, {len(res['files'])} archivos C en {out} ({time.time() - t0:.0f}s)")
     WARNINGS.write_text("\n".join(res["warnings"]) + "\n", encoding="utf-8")
@@ -576,6 +582,47 @@ def generate_report(cfg) -> dict:
     return load_json(report, {})
 
 
+def unit_module(unit: dict) -> str | None:
+    """Módulo del recompilador (ovNNN, itcm o None = residente/a deducir) de una unidad de objdiff."""
+    meta = unit.get("metadata") or {}
+    for txt in (str(meta.get("module_name") or ""), str(unit.get("name") or "")):
+        m = re.search(r"(?:^|[^a-z])ov(?:erlay)?_?(\d+)", txt, re.I)
+        if m:
+            return f"ov{int(m.group(1)):03d}"
+        if re.search(r"itcm", txt, re.I):
+            return "itcm"
+    return None
+
+
+def decomp_symbols(cfg) -> bool:
+    """Semillas con nombre a partir del informe de objdiff del repo decomp (solo metadatos:
+    nombre, dirección, tamaño y % de match; no se lee el código del decomp).
+    Escribe .stk/decomp_symbols.txt; devuelve False si no hay decomp u objdiff."""
+    d = cfg.get("decomp")
+    od = find_objdiff()
+    if not d or not od or not (Path(d) / "objdiff.json").exists():
+        return DECOMP_SYMBOLS.exists()  # se reutiliza el último si lo hay
+    report = STATE_DIR / "report.json"
+    if run([od, "report", "generate", "-p", d, "-o", report], check=False) != 0:
+        print("  aviso: objdiff-cli report falló; uso los símbolos anteriores si los hay")
+        return DECOMP_SYMBOLS.exists()
+    rep = load_json(report, {})
+    lines, matched = [], 0
+    for unit in rep.get("units", []):
+        mod = unit_module(unit)
+        for fn in unit.get("functions", []) or []:
+            addr = fn_addr(fn)
+            if addr is None or not fn.get("name"):
+                continue
+            pct = num(fn.get("fuzzy_match_percent"))
+            matched += pct >= 100
+            name = "".join(ch if ch.isalnum() or ch in "_:$.@" else "_" for ch in fn["name"])
+            lines.append(f"{addr:08X} auto {mod or ''} # {name} size={int(num(fn.get('size')))} match={pct:.0f}")
+    DECOMP_SYMBOLS.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"  decomp (objdiff): {len(lines)} funciones con dirección, {matched} emparejadas al 100 %")
+    return bool(lines)
+
+
 def cmd_progress(a) -> None:
     cfg = config()
     rep = generate_report(cfg)
@@ -788,6 +835,8 @@ def main() -> None:
     s.add_argument("--scan-thumb", action="store_true", help="buscar también prólogos Thumb")
     s.add_argument("--hook", action="append", default=[], help="función a reemplazar en tiempo de ejecución (hex)")
     s.add_argument("--no-comments", action="store_true")
+    s.add_argument("--no-decomp", action="store_true",
+                   help="no usar los símbolos del informe de objdiff del repo decomp")
     s.add_argument("--compile", action="store_true", help="compila el resultado para verificarlo (necesita cmake)")
     s.add_argument("--opt", choices=["fast", "medium", "release"], default=None,
                    help="optimización del C: fast (sin optimizar, compila mucho antes; por defecto con --learn), "

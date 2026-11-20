@@ -23,10 +23,10 @@ Peticiones explícitas del usuario:
 - `RSSJ2004/SoulTrails`: fork de `zeldaret/st` (decompilación). **No se ha modificado ni analizado
   su código.** Sus `CLAUDE.md`/`AGENTS.md` traían un aviso de la iniciativa "no-agents.md" de los
   mantenedores de zeldaret pidiendo que los agentes de IA no lean ni modifiquen ese repositorio. El
-  usuario borró esos archivos de su fork, pero en la sesión anterior se decidió respetar la
-  petición de los autores: el toolkit es independiente y solo **invoca** las herramientas del repo
-  decomp (`tools/configure.py`, `ninja`, `objdiff`) en la máquina del usuario. La siguiente sesión
-  debería mantener ese criterio o hablarlo con el usuario.
+  usuario borró esos archivos de su fork, pero se decidió respetar la petición de los autores: el
+  toolkit es independiente y solo **invoca** las herramientas del repo decomp (`tools/configure.py`,
+  `ninja`, `objdiff`) en la máquina del usuario. El usuario confirmó usar sus metadatos (nombres,
+  direcciones, tamaños, % de match) vía el informe de objdiff, sin leer el código.
 
 ## Estado actual
 Todos los tests pasan (`python -m unittest discover -s tests` → 23 OK; además
@@ -112,6 +112,14 @@ abiertos) y `/nodeReuse:false` en MSBuild. Ojo: la copia local del usuario era u
 recomp dio 31956 funciones (antes 57564 con el zip viejo: probablemente falsos positivos que ya filtra
 la regla de prólogo) y 2 "no soportadas" que son texto ASCII ("Titl", "vill"): falta filtrar
 candidatos que contienen cadenas.
+
+**Símbolos del decomp vía objdiff** (acordado con el usuario: **solo** el informe de
+`objdiff-cli report`, nunca leer el código del repo decomp): `stk recomp` escribe
+`.stk/decomp_symbols.txt` (`ADDR auto ovNNN # nombre size= match=`) si hay decomp configurado y
+objdiff-cli; las semillas `auto` prueban ARM y Thumb y el nombre va al comentario de la función
+generada (`tests/test_decomp_symbols.py`). `--no-decomp` lo desactiva. Pendiente: usar los nombres
+para los hooks de la capa de plataforma (OS_SaveContext, FS, GX...) y para mostrar fallos.
+`/MP` de MSVC limitado por la RAM (1,5 GB por proceso). Plan completo del port en `docs/PLAN.md`.
 
 **Assets propios (`sttools/gamefmt.py`, `tests/test_gamefmt.py`)**: `.nbf*` → PNG (bpp deducido por
 la pantalla y la paleta), `.ntf*` → PNG (formato/tamaño supuestos: `notes` en el manifiesto), y

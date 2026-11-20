@@ -65,6 +65,8 @@ class Program:
         self._traces: dict[tuple[str, int, bool], Function] = {}
         self._plausible: dict[tuple[str, int, bool], bool] = {}
         self._thumb_tables: dict[tuple[str, int], list[int] | None] = {}
+        # Nombres conocidos (módulo, dirección) -> símbolo, p. ej. del informe de objdiff del decomp
+        self.names: dict[tuple[str, int], str] = {}
 
     # ----------------------------------------------------------- memoria
     def module_for(self, addr: int, prefer: Module | None = None) -> Module | None:

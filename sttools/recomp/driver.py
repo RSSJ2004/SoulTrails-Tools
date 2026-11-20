@@ -27,9 +27,11 @@ def modules_from_rom(rom: Rom) -> list[Module]:
     return mods
 
 
-def parse_seed_line(line: str) -> tuple[int, bool, str | None, int | None] | None:
+def parse_seed_line(line: str) -> tuple[int, bool | None, str | None, int | None] | None:
     """Formatos: '02001234 thumb', '0x02001234', '02001234 arm ov012',
-    '02200000 arm sig=1A2B3C4D' (fallo del runtime con la firma de la memoria)."""
+    '02200000 arm sig=1A2B3C4D' (fallo del runtime con la firma de la memoria),
+    '02001234 auto ov031 # nombre' (modo desconocido: se prueba ARM y Thumb; el comentario
+    es el nombre de la función, p. ej. del informe de objdiff)."""
     parts = line.split("#")[0].split()
     if not parts:
         return None
@@ -41,11 +43,29 @@ def parse_seed_line(line: str) -> tuple[int, bool, str | None, int | None] | Non
             thumb = True
         elif p.lower() in ("arm", "a"):
             thumb = False
+        elif p.lower() == "auto":
+            thumb = None
         elif p.lower().startswith("sig="):
             sig = int(p[4:], 16)
         else:
             mod = p
     return addr & ~1, thumb, mod, sig
+
+
+def seed_name(line: str) -> str | None:
+    if "#" not in line:
+        return None
+    n = line.split("#", 1)[1].strip().split()
+    return n[0] if n else None
+
+
+def auto_mode(prog: Program, m: Module, addr: int) -> bool | None:
+    """ARM o Thumb para una dirección sin modo conocido; None si ninguno parece código."""
+    if addr % 4 == 0 and prog.plausible(m, addr, False):
+        return False
+    if prog.plausible(m, addr, True):
+        return True
+    return None
 
 
 def collect_seeds(prog: Program, entry: int | None, ghidra: Path | None, seed_files: list[Path],
@@ -72,6 +92,20 @@ def collect_seeds(prog: Program, entry: int | None, ghidra: Path | None, seed_fi
             if not s:
                 continue
             addr, thumb, mod, sig = s
+            name = seed_name(line)
+            if thumb is None:
+                mods = [by_name[mod]] if mod in by_name else (
+                    [prog.module_for(addr)] if prog.module_for(addr) else prog.overlays_at(addr))
+                for m in mods:
+                    t = auto_mode(prog, m, addr)
+                    if t is not None:
+                        seeds.append((addr, t, m))
+                        if name:
+                            prog.names[(m.name, addr)] = name
+                continue
+            if name:
+                for m in ([by_name[mod]] if mod in by_name else prog.candidates(addr, thumb, sig)):
+                    prog.names[(m.name, addr)] = name
             if mod:
                 seeds.append((addr, thumb, by_name.get(mod)))
             else:  # puede estar en uno o varios overlays
@@ -93,6 +127,7 @@ def run(mods: list[Module], out: Path, entry: int | None, ghidra: Path | None = 
     prog.discover(seeds)
     res = Generator(prog, hooks=hooks, comments=comments).write(out)
     res["seeds"] = len(seeds)
+    res["named"] = sum(1 for k in prog.names if k in prog.functions)
     res["modules"] = [{"name": m.name, "base": hex(m.base), "size": len(m.data), "overlay": m.overlay} for m in mods]
     (out / "recomp_report.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
     return res
