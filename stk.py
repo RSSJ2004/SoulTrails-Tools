@@ -458,6 +458,8 @@ def cmd_recomp(a) -> None:
             before = set(miss_lines())
             cmd = [str(exe), "--rom", cfg["rom"], "--misses", str(MISSES), "--max-frames", str(a.max_frames),
                    "--watchdog", str(max(5, a.timeout - 10))]
+            for spec in a.dump_mem:
+                cmd += ["--dump-mem", spec]
             if a.dump_frames:
                 FRAMES_DIR.mkdir(parents=True, exist_ok=True)
                 cmd += ["--dump-frames", str(a.dump_frames), "--frames-dir", str(FRAMES_DIR)]
@@ -899,6 +901,8 @@ def main() -> None:
     s.add_argument("--max-iter", type=int, default=50, help="máximo de vueltas de --learn")
     s.add_argument("--max-frames", type=int, default=600, help="cuadros que se deja correr el port en cada vuelta")
     s.add_argument("--timeout", type=int, default=120, help="segundos máximos por ejecución del port")
+    s.add_argument("--dump-mem", action="append", default=[],
+                   help="con --learn, vuelca memoria del juego al terminar: DIR:LEN en hex (repetible)")
     s.add_argument("--dump-frames", type=int, default=60,
                    help="con --learn, guarda las dos pantallas cada N cuadros en .stk/frames (0 = no)")
     s.set_defaults(fn=cmd_recomp)

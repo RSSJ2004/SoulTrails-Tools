@@ -82,6 +82,26 @@ static void hot_sample(void) {
     hot_last_pos = pos;
 }
 
+/* --dump-mem DIR:LEN (repetible): volcado de memoria del juego al terminar */
+static uint32_t dump_addr[16], dump_len[16];
+static int ndumps;
+
+static void mem_report(void) {
+    for (int d = 0; d < ndumps; d++) {
+        fprintf(stderr, "[port] memoria %08X (%u bytes):\n", dump_addr[d], dump_len[d]);
+        for (uint32_t o = 0; o < dump_len[d]; o += 16) {
+            fprintf(stderr, "  %08X:", dump_addr[d] + o);
+            for (uint32_t k = 0; k < 16 && o + k < dump_len[d]; k += 4) {
+                uint8_t* p = st_ptr(dump_addr[d] + o + k, 4);
+                uint32_t v = 0;
+                if (p) memcpy(&v, p, 4);
+                fprintf(stderr, " %08X", v);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+}
+
 static void hot_report(void) {
     fprintf(stderr, "[port] funciones más ejecutadas (muestras por cuadro):\n");
     for (int r = 0; r < 25; r++) {
@@ -93,6 +113,7 @@ static void hot_report(void) {
         hot_count[best] = 0;
     }
     fprintf(stderr, "[port] cambios de hilo: %lu, IRQ atendidas: %u\n", st_thread_switches, st_irq.served);
+    mem_report();
 }
 
 /* Cada espera del juego cuenta como un cuadro con su VBlank (sin ventana todavía) */
@@ -221,6 +242,12 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--max-frames") && i + 1 < argc) max_frames = strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--dump-frames") && i + 1 < argc) dump_every = (unsigned)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--frames-dir") && i + 1 < argc) dump_dir = argv[++i];
+        else if (!strcmp(argv[i], "--dump-mem") && i + 1 < argc && ndumps < 16) {
+            char* end;
+            dump_addr[ndumps] = (uint32_t)strtoul(argv[++i], &end, 16);
+            dump_len[ndumps] = *end == ':' ? (uint32_t)strtoul(end + 1, NULL, 16) : 0x40;
+            ndumps++;
+        }
         else if (!strcmp(argv[i], "--lang") && i + 1 < argc) {
             static const char* langs[] = {"ja", "en", "fr", "de", "it", "es"};
             const char* l = argv[++i];

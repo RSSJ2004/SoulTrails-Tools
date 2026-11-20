@@ -213,6 +213,12 @@ Tras KEYINPUT: 1800 cuadros sin fallos, pero sigue en el logo de Nintendo (cuadr
 idénticos): espera algo en un bucle que sí pasa cuadros. Diagnóstico nuevo: al terminar, el port
 lista las funciones más ejecutadas (muestras del anillo de traza por cuadro), cambios de hilo e
 IRQ atendidas, y `stk --learn` resume las líneas `[arm7]`, `[st] PXI` y `[hilos]`.
+Resumen con la ROM (900 cuadros): 1857 cambios de hilo y 1088 IRQ (hilos e IRQ bien); el hilo
+principal espera cuadros. PXI: táctil (tag 6) repetido, sonido (tag 7, datos 204EC60) y tag 11 con
+datos 0 y luego `020506A0` (dirección de la zona compartida de órdenes; probablemente la biblioteca
+CARD del SDK: cartucho/partida guardada que hace el ARM7). Hipótesis: el logo espera a que el ARM7
+procese esas órdenes. `--dump-mem DIR:LEN` (port y `stk recomp --learn`) para ver esa zona y la
+tabla de callbacks PXI (020504C8, vista en el arranque de la FIFO).
 **Compilación incremental real**: archivos `rc_<módulo>_<rango 32 KB>.c` con sus propios
 prototipos; aprender una función solo recompila su archivo y los que la llaman.
 
