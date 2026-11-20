@@ -313,6 +313,15 @@ void st_mcr(StCpu* c, int cp, int op1, int crn, int crm, int op2, uint32_t v) {
         uint32_t sz = 512u << ((v >> 1) & 0x1F);
         st_itcm_size = sz ? sz : 0x02000000u;
     }
+    if (crn == 7 && ((crm == 0 && op2 == 4) || (crm == 8 && op2 == 2))) {           /* esperar IRQ */
+        /* El ARM946E-S se detiene hasta la próxima IRQ (OS_Halt del SDK, hilo ocioso): pasa un
+         * cuadro si no hay ninguna pendiente y, si la CPU las acepta, se atiende. */
+        if (!((st_irq.ime & 1) && (st_irq.ie & st_irq.if_)) && !st_platform.idle(c)) {
+            st_platform.halt(c, "espera de IRQ abortada por la plataforma");
+            return;
+        }
+        if (!(c->cpsr_ctrl & 0x80u)) st_irq_service(c);
+    }
 }
 uint32_t st_get_cpsr(StCpu* c) {
     return (c->n << 31) | (c->z << 30) | (c->c << 29) | (c->v << 28) | (c->q << 27) | (c->cpsr_ctrl & 0xDF);

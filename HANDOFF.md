@@ -172,6 +172,11 @@ rutina que revisa si hay que cambiar de hilo (guarda el contexto con `stmib r0!,
 indirecto (salvo a LR o retorno de excepción) es `ST_CALL_THEN_RET` y X se siembra como función.
 Siguiente previsible: cambio de hilo real → fase 1.5 (fibras); 01FFBDC8 es el punto de enganche.
 
+**Tras el arreglo de la IRQ**: 3 funciones más aprendidas, el juego configura las pantallas y la
+táctil (PXI tag 6) y llega a un bucle sin accesos a memoria en `arm9:0202852C` (LR en 02027038,
+sp=0204E800): `OS_Halt` = CP15 c7,c0,4 "esperar IRQ", que el runtime ignoraba. Ahora `st_mcr`
+pasa un cuadro (idle) si no hay IRQ pendiente y la atiende si el CPSR lo permite.
+
 **Fase 2 empezada (sin probar con la ROM)**: `runtime/st_vram.c` (bancos A-I con VRAMCNT: BG/OBJ
 de cada motor por páginas de 16 KB, LCDC, ranuras de texturas y paletas, paletas extendidas;
 `st_ptr` de 0x06 pasa por aquí) y `runtime/st_gpu2d.c` (motores 2D por software, cuadro entero:

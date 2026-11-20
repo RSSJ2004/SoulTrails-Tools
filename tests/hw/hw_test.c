@@ -204,6 +204,11 @@ int main(void) {
     st_gpu2d_render(0, img);
     CHECK(img[0] == 0xFF000000u);
 
+    /* CP15 "esperar IRQ" (OS_Halt): sin IRQ pendiente pasa un cuadro */
+    int before = idles;
+    st_mcr(&c, 15, 0, 7, 0, 4, 0);
+    CHECK(idles == before + 1);
+
     printf(fails ? "hw: %d fallos\n" : "hw: OK\n", fails);
     return fails != 0;
 }
