@@ -194,7 +194,10 @@ tests/                 learn/ (prog.c para --learn), bios/ (bios.c, bios_thumb.c
 3. NCER/NANR (sprites y animaciones 2D) → PNG/JSON.
 4. NFTR (fuentes) → PNG + JSON.
 5. Visor de assets (ImGui) y empaquetado a un archivo único para el port (tipo `.o2r`).
-6. `report.txt` con resumen de "no convertidos" por tipo, no solo errores.
+6. ~~`report.txt` con resumen de "no convertidos" por tipo~~ **hecho**: tabla por tipo (total,
+   convertidos, sin convertir, errores), ejemplos de lo no convertido y **desconocidos agrupados
+   por extensión + cabecera** (pista directa de formatos propios del juego para A.2). El manifiesto
+   guarda `head` en los `bin`, y los NCLR/NCGR/NSCR combinados marcan sus salidas o errores.
 
 ### D. Controles
 1. **Posición real de Link** (`ScreenSource::LinkTouchPosition`): leer la posición del jugador en

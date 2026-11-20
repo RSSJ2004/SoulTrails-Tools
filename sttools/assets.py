@@ -49,6 +49,7 @@ class Extractor:
         self.counts: Counter = Counter()
         self.errors: list[dict] = []
         self.pending_2d: dict[Path, dict[str, bytes]] = {}
+        self.entries_2d: dict[tuple, dict] = {}
 
     # -------------------------------------------------------------- general
     def log(self, msg: str) -> None:
@@ -80,11 +81,60 @@ class Extractor:
         self.write_report(summary)
         return summary
 
+    CONTAINERS = ("narc", "sdat")
+
+    def type_table(self) -> dict[str, dict]:
+        """Por tipo: total, convertidos, sin convertir, errores y ejemplos sin convertir."""
+        t: dict[str, dict] = {}
+        for e in self.manifest:
+            k = e["type"]
+            row = t.setdefault(k, {"total": 0, "converted": 0, "pending": 0, "errors": 0, "examples": []})
+            row["total"] += 1
+            if "error" in e:
+                row["errors"] += 1
+            elif e.get("outputs"):
+                row["converted"] += 1
+            elif k not in self.CONTAINERS:
+                row["pending"] += 1
+                if len(row["examples"]) < 5:
+                    row["examples"].append(e["path"])
+        return t
+
+    def unknown_groups(self) -> list[tuple[str, int, str]]:
+        """Archivos 'bin' agrupados por cabecera (4 bytes) y extensión: pistas de formatos propios."""
+        groups: dict[str, list[str]] = {}
+        for e in self.manifest:
+            if e["type"] != "bin":
+                continue
+            head = e.get("head", "")
+            ext = Path(e["path"]).suffix.lower() or "(sin extensión)"
+            groups.setdefault(f"{ext:16} cabecera {head}", []).append(e["path"])
+        return sorted(((k, len(v), v[0]) for k, v in groups.items()), key=lambda x: -x[1])
+
     def write_report(self, s: dict) -> None:
         lines = [f"ROM: {s['rom']['title']} ({s['rom']['gamecode']})",
-                 f"Archivos en NitroFS: {s['files_in_rom']}", "", "Tipos encontrados:"]
-        for k, v in s["types"].items():
-            lines.append(f"  {k:10} {v}")
+                 f"Archivos en NitroFS: {s['files_in_rom']}", "",
+                 f"{'Tipo':10} {'total':>7} {'convertidos':>12} {'sin convertir':>14} {'errores':>8}"]
+        table = self.type_table()
+        for k, row in sorted(table.items(), key=lambda kv: -kv[1]["total"]):
+            note = ""
+            if k in self.CONTAINERS:
+                note = "  (contenedor: se desempaqueta)"
+            elif k == "bin":
+                note = "  (formato desconocido)"
+            elif row["pending"] and not row["converted"]:
+                note = "  (sin conversor todavía)"
+            lines.append(f"  {k:8} {row['total']:7} {row['converted']:12} {row['pending']:14} {row['errors']:8}{note}")
+        pend = [(k, r) for k, r in table.items() if r["pending"] and k != "bin"]
+        if pend:
+            lines += ["", "Sin convertir por tipo (ejemplos):"]
+            for k, r in sorted(pend, key=lambda kv: -kv[1]["pending"]):
+                lines.append(f"  {k}: {r['pending']}  p. ej. {', '.join(r['examples'][:3])}")
+        unk = self.unknown_groups()
+        if unk:
+            lines += ["", "Desconocidos agrupados (posibles formatos propios del juego):"]
+            for key, n, ex in unk[:30]:
+                lines.append(f"  {n:5}  {key}  p. ej. {ex}")
         lines.append("")
         lines.append(f"Errores: {s['errors']}")
         for e in self.errors[:200]:
@@ -133,6 +183,8 @@ class Extractor:
             except (ValueError, IndexError):
                 pass
         entry["type"] = kind
+        if kind == "bin":
+            entry["head"] = "".join(chr(b) if 32 <= b < 127 else "." for b in data[:4]) + f" ({data[:4].hex()})"
         self.counts[kind] += 1
         self.manifest.append(entry)
         if depth > 6:
@@ -191,11 +243,22 @@ class Extractor:
             # Se combinan al final por carpeta y nombre base
             folder = conv.parent
             self.pending_2d.setdefault(folder, {})[f"{Path(path).stem}|{kind}"] = data
+            self.entries_2d[(folder, Path(path).stem, kind)] = self.manifest[-1]
             return []
         return []
 
     def rel(self, p) -> str:
         return str(Path(p).relative_to(self.out))
+
+    def mark_2d(self, folder: Path, base: str, kind: str, out: Path | None = None, error: str | None = None) -> None:
+        """Anota en la entrada del manifiesto lo que salió (o falló) al combinar NCLR/NCGR/NSCR."""
+        e = self.entries_2d.get((folder, base, kind))
+        if e is None:
+            return
+        if error is not None:
+            e["error"] = error
+        elif out is not None:
+            e.setdefault("outputs", []).append(self.rel(out))
 
     def flush_2d(self) -> None:
         """Empareja NCLR/NCGR/NSCR de la misma carpeta (mismo nombre base, o el único disponible)."""
@@ -220,24 +283,30 @@ class Extractor:
                     _, pal = F.parse_nclr(data)
                     parsed_pals[base] = pal
                     F.nclr_to_png(pal, folder / f"{base}.palette.png")
+                    self.mark_2d(folder, base, "nclr", folder / f"{base}.palette.png")
                 except Exception as e:  # noqa: BLE001
                     self.errors.append({"path": str(folder / base), "type": "nclr", "error": str(e)})
+                    self.mark_2d(folder, base, "nclr", error=str(e))
             parsed_gfx = {}
             for base, data in gfx.items():
                 try:
                     g = F.parse_ncgr(data)
                     parsed_gfx[base] = g
                     F.ncgr_to_png(g, pick(parsed_pals, base), folder / f"{base}.png")
+                    self.mark_2d(folder, base, "ncgr", folder / f"{base}.png")
                 except Exception as e:  # noqa: BLE001
                     self.errors.append({"path": str(folder / base), "type": "ncgr", "error": str(e)})
+                    self.mark_2d(folder, base, "ncgr", error=str(e))
             for base, data in scr.items():
                 try:
                     g = pick(parsed_gfx, base)
                     if g is None:
                         continue
                     F.nscr_to_png(data, g, pick(parsed_pals, base), folder / f"{base}.screen.png")
+                    self.mark_2d(folder, base, "nscr", folder / f"{base}.screen.png")
                 except Exception as e:  # noqa: BLE001
                     self.errors.append({"path": str(folder / base), "type": "nscr", "error": str(e)})
+                    self.mark_2d(folder, base, "nscr", error=str(e))
 
 
 def _common_prefix(a: str, b: str) -> str:
