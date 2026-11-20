@@ -750,7 +750,7 @@ def main() -> None:
     s.add_argument("-n", type=int, default=5)
     s.add_argument("--unit", help="filtra por nombre de unidad (p.ej. ov024)")
     s.add_argument("--max-size", type=int, default=0)
-    s.add_argument("--closest", action="store_true", help="prioriza las de mayor % (casi terminadas)")
+    s.add_argument("--closest", action="store_true", help="prioriza las de mayor %% (casi terminadas)")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_next)
 
