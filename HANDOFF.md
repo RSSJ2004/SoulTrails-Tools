@@ -100,6 +100,13 @@ overlays 020B/020D) y paró en ov001:020C2CC0 "vill": era **código Thumb** y el
 salto (bit 0) y el recompilador, ante ARM y Thumb en la misma dirección, se queda con el modo sin
 instrucciones inválidas (`tests/test_discover.py::test_arm_and_thumb_seed_prefers_valid_mode`).
 
+**020C2CC0 no es código**: `stk disasm 020C2CC1 --module ov001` muestra cadenas ("village", "dungeon",
+"Effect/*.spa"): el juego salta ahí por un destino equivocado desde `020C0F24` (función de un overlay
+que ya no estaba en memoria al volcar). Diagnóstico automático nuevo: el port lista los **overlays
+cargados** en cada parada (`st_overlay_present`: firmas de 8 funciones) y `stk --learn` desensambla
+solo la última función, la de LR y la instrucción no soportada en el overlay cargado
+(`.stk/last_disasm.txt`).
+
 ## Decisiones de diseño
 1. **El port lee la ROM del usuario en tiempo de ejecución** (`soultrails_port --rom juego.nds`),
    como N64Recomp: no se empaqueta nada del juego en el ejecutable salvo el código traducido

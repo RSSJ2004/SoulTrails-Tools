@@ -267,6 +267,26 @@ void st_call(StCpu* c, uint32_t target) {
     st_platform.miss(c, target);
 }
 
+/* ¿Está cargado este overlay? Se comparan con la memoria las firmas de hasta 8 funciones
+ * repartidas por el módulo (para diagnosticar; el despachador usa la firma de cada llamada). */
+int st_overlay_present(const StModule* m) {
+    if (m->overlay < 0) return 1;
+    if (!m->count) return 0;
+    unsigned step = m->count > 8 ? m->count / 8 : 1, tried = 0, ok = 0;
+    for (unsigned i = 0; i < m->count && tried < 8; i += step, tried++) {
+        const StFnEntry* e = &m->fns[i];
+        if (st_signature(e->addr, m->end) == e->sig) ok++;
+    }
+    return ok * 4 >= tried * 3;   /* 3 de cada 4 coinciden */
+}
+
+void st_print_loaded_overlays(FILE* out) {
+    fprintf(out, "[port] overlays cargados:");
+    for (unsigned i = 0; i < st_module_count; i++)
+        if (st_modules[i].overlay >= 0 && st_overlay_present(&st_modules[i])) fprintf(out, " %s", st_modules[i].name);
+    fprintf(out, "\n");
+}
+
 /* Función que empieza más cerca por debajo de addr (en módulos residentes): para depurar */
 const char* st_symbol_near(uint32_t addr) {
     static char buf[80];

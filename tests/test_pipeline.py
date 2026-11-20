@@ -129,6 +129,8 @@ class Watchdog(unittest.TestCase):
             self.assertIn("vigilante", out, out)
             self.assertRegex(out, r"02000008 arm9:02000008", out)    # la función que gira
             self.assertRegex(out, r"027FFF8C 4 bytes +lecturas", out)  # lo que lee el bucle
+            self.assertIn("desensamblado automático", out)            # stk desensambla solo
+            self.assertRegex(out, r"== arm9:02000008 ARM", out)
             dis = sh(*stk, "disasm", "02000008", "--c", env=env)
             self.assertIn("arm9:02000008 ARM", dis)
             self.assertIn("02000010", dis)

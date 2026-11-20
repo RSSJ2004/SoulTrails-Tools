@@ -147,6 +147,7 @@ static void dump_trace(void) {
         uint32_t a = st_trace_ring[i & (ST_TRACE_LEN - 1)];
         fprintf(stderr, "  %08X %s\n", a, st_symbol_for(a));
     }
+    st_print_loaded_overlays(stderr);
 }
 
 static void on_miss(StCpu* c, uint32_t addr) {

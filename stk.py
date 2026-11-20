@@ -575,6 +575,15 @@ def cmd_recomp(a) -> None:
                 if rc == 3:
                     why += " ya conocida (p. ej. overlay no cargado: falta la capa de plataforma)"
                 print(f"[learn {it}] se para: {why}\n{tail}\n(salida completa en {STATE_DIR / 'last_run.txt'})")
+                if rc in (3, 4, 5, 6):
+                    try:
+                        dis = auto_disasm(log, rom)
+                    except Exception as e:  # noqa: BLE001 - el diagnóstico no debe tapar la parada
+                        dis = f"(no se pudo desensamblar: {e})"
+                    if dis:
+                        (STATE_DIR / "last_disasm.txt").write_text(dis + "\n", encoding="utf-8")
+                        print("[learn] desensamblado automático (también en .stk/last_disasm.txt):")
+                        print(dis)
                 break
             learned += len(new)
             print(f"[learn {it}] aprendido: {', '.join(new)}")
@@ -868,6 +877,67 @@ def wait_for_change(src: Path, interval: float) -> None:
         time.sleep(interval)
         if snapshot(src) != before:
             return
+
+
+def disasm_lines(prog, m, addr: int, thumb: bool, limit: int = 0, c: bool = False) -> list[str]:
+    f = prog.trace_free(m, addr, thumb)
+    out = [f"== {m.name}:{addr:08X} {'Thumb' if thumb else 'ARM'}, {len(f.insns)} instrucciones"]
+    for k, ia in enumerate(sorted(f.insns)):
+        if limit and k >= limit:
+            out.append(f"  ... ({len(f.insns) - limit} más)")
+            break
+        ins = f.insns[ia]
+        raw = f"{ins.raw:0{4 if thumb else 8}X}"
+        asm = ins.asm or "?"
+        lit = re.search(r"=(0x[0-9a-fA-F]+)$", asm)
+        if lit and asm.startswith("ldr"):
+            v = prog.read(m, int(lit.group(1), 16), 4)
+            asm += f"  ; [{v:08X}]" if v is not None else ""
+        code = " ".join(ins.code.split()) if c else ""
+        out.append(f"  {ia:08X}  {raw:8}  {asm:44} {code[:110]}")
+    return out
+
+
+def auto_disasm(log: str, rom) -> str:
+    """Tras una parada: desensambla la última función ejecutada, la de LR y la instrucción no
+    soportada, eligiendo el overlay que el port dice que está cargado."""
+    from sttools.recomp import driver
+    from sttools.recomp.program import Program
+    loaded = set()
+    m = re.search(r"\[port\] overlays cargados:(.*)", log)
+    if m:
+        loaded = set(m.group(1).split())
+    want = []
+    trace = re.findall(r"^  ([0-9A-F]{8}) \S+$", log.split("últimas funciones", 1)[-1], re.M) if "últimas funciones" in log else []
+    if trace:
+        want.append(("última función", int(trace[-1], 16)))
+    m = re.search(r"\[port\] LR ([0-9A-F]{8})", log)
+    if m:
+        want.append(("LR (quien llamó)", int(m.group(1), 16)))
+    m = re.search(r"instrucción no soportada (ARM|Thumb) ([0-9A-F]{8})", log)
+    if m:
+        want.append(("instrucción no soportada", int(m.group(2), 16) | (1 if m.group(1) == "Thumb" else 0)))
+    if not want:
+        return ""
+    prog = Program(driver.modules_from_rom(rom))
+    out = []
+    for what, a in want:
+        addr, thumb = a & ~1, bool(a & 1)
+        mods = [prog.module_for(addr)] if prog.module_for(addr) else [
+            o for o in prog.overlays_at(addr) if not loaded or o.name in loaded]
+        if not mods:
+            out.append(f"-- {what} {a:08X}: ningún módulo cargado la contiene")
+            continue
+        if what == "LR (quien llamó)":   # LR apunta a mitad de función: un trozo alrededor
+            for mod in mods:
+                start = max(mod.base, addr - (0x20 if thumb else 0x40))
+                out.append(f"-- {what} {a:08X} en {mod.name} (desde {start:08X})")
+                out += disasm_lines(prog, mod, start, thumb, limit=40)
+            continue
+        for mod in mods:
+            out.append(f"-- {what} {a:08X}")
+            out += disasm_lines(prog, mod, addr, thumb, limit=60)
+    return "\n".join(out)
 
 
 def cmd_disasm(a) -> None:

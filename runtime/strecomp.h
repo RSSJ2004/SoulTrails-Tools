@@ -197,7 +197,10 @@ int st_overlay_is_loaded(int id);
 /* ¿El contenido de la memoria coincide con este overlay en esa función? */
 uint32_t st_signature(uint32_t addr, uint32_t end);
 const char* st_symbol_for(uint32_t addr);
-const char* st_symbol_near(uint32_t addr);           /* "módulo:función+desplazamiento" */           /* "módulo:función" para depurar */
+const char* st_symbol_near(uint32_t addr);
+int st_overlay_present(const StModule* m);            /* diagnóstico: ¿overlay en memoria? */
+#include <stdio.h>
+void st_print_loaded_overlays(FILE* out);           /* "módulo:función+desplazamiento" */           /* "módulo:función" para depurar */
 
 /* Registro de direcciones no encontradas: se usan como semillas en el siguiente
  * `stk recomp` para que el recompilador aprenda de cada ejecución. */
