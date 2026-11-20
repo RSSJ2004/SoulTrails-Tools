@@ -134,7 +134,11 @@ uint32_t st_read32(StCpu* c, uint32_t addr);
 void st_write8(StCpu* c, uint32_t addr, uint8_t v);
 void st_write16(StCpu* c, uint32_t addr, uint16_t v);
 void st_write32(StCpu* c, uint32_t addr, uint32_t v);
-typedef struct StProbe { uint32_t addr; int size; unsigned reads, writes; } StProbe;
+typedef struct StProbe {
+    uint32_t addr; int size; unsigned reads, writes;
+    uint32_t vals[6]; unsigned nvals;   /* valores distintos leídos/escritos (bit 31 de 'kinds': escrito) */
+    uint8_t written[6];
+} StProbe;
 #define ST_PROBE_LEN 256u
 extern volatile int st_probe_on;
 extern StProbe st_probe[ST_PROBE_LEN];
@@ -150,7 +154,8 @@ void st_overlay_set_loaded(int id, int loaded);
 int st_overlay_is_loaded(int id);
 /* ¿El contenido de la memoria coincide con este overlay en esa función? */
 uint32_t st_signature(uint32_t addr, uint32_t end);
-const char* st_symbol_for(uint32_t addr);           /* "módulo:función" para depurar */
+const char* st_symbol_for(uint32_t addr);
+const char* st_symbol_near(uint32_t addr);           /* "módulo:función+desplazamiento" */           /* "módulo:función" para depurar */
 
 /* Registro de direcciones no encontradas: se usan como semillas en el siguiente
  * `stk recomp` para que el recompilador aprenda de cada ejecución. */

@@ -133,6 +133,13 @@ espera: **sonda de memoria** (el vigilante anota 300 ms de lecturas/escrituras c
 `stk disasm ADDR [--c]` (desensambla con el decodificador del recompilador; `ldr rX, =lit ; [valor]`).
 `--learn` guarda la salida entera en `.stk/last_run.txt`.
 
+**Con la fase 1 en la ROM real**: el juego avanza más (crt0 → 02011DA0 → bucle Thumb 0202782x) y
+gira releyendo IPCSYNC (11,5 M lecturas y 11 478 escrituras en 300 ms, valor 0): el eco del ARM7
+no satisface este segundo protocolo de sincronización. LR=0202B637 → la función que gira es
+probablemente la Thumb de `0202B5EC`. La sonda ahora apunta los valores distintos leídos y
+escritos y el vigilante dice en qué función está LR (`st_symbol_near`). Siguiente: con los valores
+y `stk disasm 0202B5ED`, modelar la respuesta del ARM7 en IPCSYNC.
+
 **Fase 1 de `docs/PLAN.md` (sin probar aún con la ROM)**:
 - `runtime/st_dev.c`: cartucho en modo de datos (B7 bloque con redirección <0x8000, B8 ID),
   DMA (inmediata, VBlank, cartucho una palabra por petición, FIFO 3D de golpe), timers con

@@ -97,52 +97,64 @@ volatile int st_probe_on;
 StProbe st_probe[ST_PROBE_LEN];
 volatile unsigned st_probe_n;
 
-static void probe(uint32_t a, int size, int write) {
+static void probe_val(StProbe* q, uint32_t v, int write) {
+    for (unsigned k = 0; k < q->nvals; k++)
+        if (q->vals[k] == v && q->written[k] == write) return;
+    if (q->nvals < 6) { q->vals[q->nvals] = v; q->written[q->nvals++] = (uint8_t)write; }
+}
+static StProbe* probe(uint32_t a, int size, int write) {
     unsigned n = st_probe_n;
     for (unsigned i = 0; i < n; i++)
         if (st_probe[i].addr == a && st_probe[i].size == size) {
             if (write) st_probe[i].writes++; else st_probe[i].reads++;
-            return;
+            return &st_probe[i];
         }
-    if (n < ST_PROBE_LEN) {
-        st_probe[n].addr = a;
-        st_probe[n].size = size;
-        st_probe[n].reads = !write;
-        st_probe[n].writes = write;
-        st_probe_n = n + 1;
-    }
+    if (n >= ST_PROBE_LEN) return NULL;
+    StProbe* q = &st_probe[n];
+    memset(q, 0, sizeof *q);
+    q->addr = a;
+    q->size = size;
+    q->reads = !write;
+    q->writes = write;
+    st_probe_n = n + 1;
+    return q;
 }
-#define PROBE(a, s, w) do { if (st_probe_on) probe((a), (s), (w)); } while (0)
+/* Lectura: se anota la dirección antes y el valor después; escritura: ambos a la vez */
+#define PROBE_W(a, s, v) do { if (st_probe_on) { StProbe* q_ = probe((a), (s), 1); if (q_) probe_val(q_, (v), 1); } } while (0)
+#define PROBE_R(a, s, v) do { if (st_probe_on) { StProbe* q_ = probe((a), (s), 0); if (q_) probe_val(q_, (v), 0); } } while (0)
 
 uint32_t st_read8(StCpu* c, uint32_t a) {
-    PROBE(a, 1, 0);
     uint8_t* p = st_ptr(a, 1);
-    return p ? *p : st_io_read(c, a, 1) & 0xFF;
+    uint32_t v = p ? *p : st_io_read(c, a, 1) & 0xFF;
+    PROBE_R(a, 1, v);
+    return v;
 }
 uint32_t st_read16(StCpu* c, uint32_t a) {
-    PROBE(a, 2, 0);
     uint8_t* p = st_ptr(a, 2);
-    if (p) { uint16_t v; memcpy(&v, p, 2); return v; }
-    return st_io_read(c, a, 2) & 0xFFFF;
+    uint32_t v;
+    if (p) { uint16_t h; memcpy(&h, p, 2); v = h; } else v = st_io_read(c, a, 2) & 0xFFFF;
+    PROBE_R(a, 2, v);
+    return v;
 }
 uint32_t st_read32(StCpu* c, uint32_t a) {
-    PROBE(a, 4, 0);
     uint8_t* p = st_ptr(a, 4);
-    if (p) { uint32_t v; memcpy(&v, p, 4); return v; }
-    return st_io_read(c, a, 4);
+    uint32_t v;
+    if (p) memcpy(&v, p, 4); else v = st_io_read(c, a, 4);
+    PROBE_R(a, 4, v);
+    return v;
 }
 void st_write8(StCpu* c, uint32_t a, uint8_t v) {
-    PROBE(a, 1, 1);
+    PROBE_W(a, 1, v);
     uint8_t* p = st_ptr(a, 1);
     if (p) *p = v; else st_io_write(c, a, v, 1);
 }
 void st_write16(StCpu* c, uint32_t a, uint16_t v) {
-    PROBE(a, 2, 1);
+    PROBE_W(a, 2, v);
     uint8_t* p = st_ptr(a, 2);
     if (p) memcpy(p, &v, 2); else st_io_write(c, a, v, 2);
 }
 void st_write32(StCpu* c, uint32_t a, uint32_t v) {
-    PROBE(a, 4, 1);
+    PROBE_W(a, 4, v);
     uint8_t* p = st_ptr(a, 4);
     if (p) memcpy(p, &v, 4); else st_io_write(c, a, v, 4);
 }
@@ -250,6 +262,27 @@ void st_call(StCpu* c, uint32_t target) {
         fflush(miss_log);
     }
     st_platform.miss(c, target);
+}
+
+/* Función que empieza más cerca por debajo de addr (en módulos residentes): para depurar */
+const char* st_symbol_near(uint32_t addr) {
+    static char buf[80];
+    addr &= ~1u;
+    for (unsigned i = 0; i < st_module_count; i++) {
+        const StModule* m = &st_modules[i];
+        if (addr < m->start || addr >= m->end || m->overlay >= 0) continue;
+        unsigned lo = 0, hi = m->count;
+        while (lo < hi) {
+            unsigned mid = (lo + hi) / 2;
+            if (m->fns[mid].addr <= addr) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo == 0) break;
+        const StFnEntry* e = &m->fns[lo - 1];
+        snprintf(buf, sizeof buf, "%s:%08X+%X", m->name, e->addr, addr - e->addr);
+        return buf;
+    }
+    return "?";
 }
 
 const char* st_symbol_for(uint32_t addr) {

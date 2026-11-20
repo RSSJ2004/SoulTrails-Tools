@@ -65,7 +65,9 @@ static void watchdog_dump(void) {
     st_probe_on = 0;
     fprintf(stderr, "[port] vigilante: %u s sin terminar, %lu cuadros\n", watchdog_secs, frames);
     fprintf(stderr, "[port] registros:");
-    for (int i = 0; i < 16; i++) fprintf(stderr, " r%d=%08X", i, cpu.r[i]);
+    for (int i = 0; i < 15; i++) fprintf(stderr, " r%d=%08X", i, cpu.r[i]);
+    fprintf(stderr, "\n[port] LR %08X está en %s (una función que gira sin llamar a nadie no sale en la lista: "
+                    "suele ser la de LR o la que llamó a la última)", cpu.r[14], st_symbol_near(cpu.r[14] - 2));
     fprintf(stderr, "\n[port] últimas funciones (la más reciente al final):\n");
     uint32_t pos = st_trace_pos;
     uint32_t n = pos < ST_TRACE_LEN ? pos : ST_TRACE_LEN;
@@ -86,8 +88,11 @@ static void watchdog_dump(void) {
         uint8_t* m = st_ptr(q->addr, (uint32_t)q->size);
         uint32_t v = 0;
         if (m) memcpy(&v, m, (size_t)q->size);
-        fprintf(stderr, "  %08X %d bytes  lecturas %-9u escrituras %-9u valor %s%0*X\n", q->addr, q->size, q->reads,
-                q->writes, m ? "" : "(E/S) ", q->size * 2, v);
+        fprintf(stderr, "  %08X %d bytes  lecturas %-9u escrituras %-9u valor %s%0*X  vistos:", q->addr, q->size,
+                q->reads, q->writes, m ? "" : "(E/S) ", q->size * 2, v);
+        for (unsigned k = 0; k < q->nvals; k++)
+            fprintf(stderr, " %s%0*X", q->written[k] ? "w:" : "r:", q->size * 2, q->vals[k]);
+        fprintf(stderr, "\n");
     }
     fflush(stderr);
     _Exit(6);
