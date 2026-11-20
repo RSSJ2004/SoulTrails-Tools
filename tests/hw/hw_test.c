@@ -95,6 +95,14 @@ int main(void) {
     CHECK(st_irq.if_ & ST_IRQ_VBLANK);
     CHECK(idles >= 1);
 
+    /* ARM7 HLE por defecto: responde con el mismo tag y comando; el RTC deja la fecha en BCD */
+    st_platform.pxi_send = NULL;
+    while (!(st_read16(&c, 0x04000184) & 0x0100)) st_read32(&c, 0x04100000);   /* vaciar */
+    st_write32(&c, 0x04000188, (0x1000u << 6) | 5u);
+    CHECK(st_read32(&c, 0x04100000) == ((0x1000u << 6) | 5u));
+    CHECK(st_main_ram[0x3FFDE8 + 1] >= 0x01 && st_main_ram[0x3FFDE8 + 1] <= 0x12);   /* mes en BCD */
+    st_platform.pxi_send = on_pxi;
+
     /* Detector de esperas */
     st_hw_poll_limit = 1000;
     st_hw_frame();

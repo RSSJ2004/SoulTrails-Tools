@@ -164,6 +164,12 @@ int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
         return 1;
     }
     if (st_dev_read(c, addr, size, out)) return 1;
+    if (addr >= 0x08000000u && addr < 0x0B000000u) {   /* ranura GBA vacía: sin accesorios */
+        static int warned;
+        if (!warned++) fprintf(stderr, "[st] ranura GBA: no hay cartucho (lecturas a 0)\n");
+        *out = 0;
+        return 1;
+    }
     if (a == 0x04100000u) {
         uint32_t v = 0;
         if (fifo_rx_n) {
@@ -219,6 +225,7 @@ int st_hw_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
         if (pxi_logged++ < 64)
             fprintf(stderr, "[st] PXI ARM9->ARM7 %08X (tag %u, datos %07X)\n", v, v & 0x1Fu, v >> 6);
         if (st_platform.pxi_send) st_platform.pxi_send(c, v);
+        else st_arm7_pxi(c, v);
         if (fifo_cnt & 0x0004u) st_raise_irq(ST_IRQ_FIFO_SEND);
         return 1;
     }

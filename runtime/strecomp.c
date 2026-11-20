@@ -20,14 +20,15 @@ volatile uint32_t st_trace_pos;
 static unsigned char overlay_loaded[1024];
 
 /* ------------------------------------------------------------- plataforma */
+static unsigned io_msgs;   /* E/S fuera del mapa conocido: solo los primeros avisos */
 static uint32_t default_io_read(StCpu* c, uint32_t addr, int size) {
     (void)c; (void)size;
-    fprintf(stderr, "[st] IO read%d %08X\n", size * 8, addr);
+    if (io_msgs < 32 && ++io_msgs) fprintf(stderr, "[st] IO read%d %08X\n", size * 8, addr);
     return 0;
 }
 static void default_io_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
     (void)c;
-    fprintf(stderr, "[st] IO write%d %08X = %08X\n", size * 8, addr, v);
+    if (io_msgs < 32 && ++io_msgs) fprintf(stderr, "[st] IO write%d %08X = %08X\n", size * 8, addr, v);
 }
 static void default_swi(StCpu* c, uint32_t num) {
     if (!st_bios_swi(c, num)) fprintf(stderr, "[st] SWI %02X sin implementar\n", num);

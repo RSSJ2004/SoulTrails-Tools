@@ -152,6 +152,14 @@ probable: espera a que el ARM7 marque sus callbacks en 027FFF8C o mensajes PXI s
 `027FFF8C` = 0: marcas de tags del PXI registrados por el ARM7. El arranque ahora pone
 `st_boot_arm7_tags` (todos) ahí. Siguiente previsible: mensajes PXI que esperan respuesta.
 
+**`--learn` funcionando solo** (12 funciones aprendidas en 12 vueltas; carga el overlay 18 por el
+cartucho emulado). Luego gira en `arm9:020300BC` leyendo `02050664`=1 tras mandar PXI tag 5
+(RTC) datos 1000h: espera la respuesta del ARM7. Hecho: `runtime/st_arm7.c` (ARM7 HLE por
+defecto si la plataforma no pone `pxi_send`): responde mismo tag y datos (resultado 0) y para el
+RTC escribe la fecha del PC en BCD en 27FFDE8h (dirección supuesta). Y **IRQ en los saltos hacia
+atrás** (`ST_POLL` en bucles del código generado): una espera activa sobre un flag que pone un
+callback de IRQ no llama a nadie. Ranura GBA: lecturas a 0 sin avisos repetidos.
+
 **Fase 1 de `docs/PLAN.md` (sin probar aún con la ROM)**:
 - `runtime/st_dev.c`: cartucho en modo de datos (B7 bloque con redirección <0x8000, B8 ID),
   DMA (inmediata, VBlank, cartucho una palabra por petición, FIFO 3D de golpe), timers con

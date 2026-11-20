@@ -95,6 +95,7 @@ void st_raise_irq(uint32_t mask);
 void st_hw_reset(void);
 void st_hw_frame(void);                     /* la plataforma avanzó un cuadro */
 void st_pxi_reply(uint32_t value);          /* respuesta del ARM7 a la FIFO del ARM9 */
+void st_arm7_pxi(StCpu* c, uint32_t msg);   /* ARM7 HLE por defecto (st_arm7.c) */
 int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out);
 int st_hw_write(StCpu* c, uint32_t addr, uint32_t v, int size);
 /* Dispositivos (st_dev.c): cartucho, DMA, timers y reloj virtual de 33,51 MHz */
@@ -247,6 +248,7 @@ static inline uint32_t st_ldr32(StCpu* c, uint32_t addr) {
 #define ST_TRACE_LEN 64u
 extern volatile uint32_t st_trace_ring[ST_TRACE_LEN];
 extern volatile uint32_t st_trace_pos;
+#define ST_POLL() do { if (st_irq_pending) st_irq_poll(c); } while (0)
 #ifdef ST_NO_TRACE
 #define ST_TRACE(a) do { if (st_irq_pending) st_irq_poll(c); } while (0)
 #else

@@ -125,7 +125,9 @@ class Generator:
         if ins.kind == BRANCH:
             tgt = ins.target & ~1
             if tgt in f.insns and bool(ins.target & 1) == f.thumb:
-                return f"goto {label(tgt)};"
+                # Salto hacia atrás = bucle: punto donde entregar IRQ (una espera activa sobre un
+                # flag que pone el manejador de una IRQ no llama a nadie)
+                return f"{{ ST_POLL(); goto {label(tgt)}; }}" if tgt <= ins.addr else f"goto {label(tgt)};"
             name = self.call_target(f, ins.target)
             return f"ST_TAIL({name});" if name else f"ST_TAIL_DYN({h(ins.target)});"
         if ins.kind == CALL:
