@@ -302,6 +302,8 @@ def cmd_rom(a) -> None:
     rom = Rom.load(cfg["rom"])
     for k, v in rom.header.items():
         print(f"  {k:12} {hex(v) if isinstance(v, int) else v}")
+    stored, calc = rom.header_crc()
+    print(f"  CRC cabecera {stored:#06x} {'OK' if stored == calc else f'NO COINCIDE (calculado {calc:#06x}): ROM dañada o modificada'}")
     print(f"  overlays ARM9: {len(rom.overlays9())}")
     print(f"  archivos NitroFS: {len(rom.files())}")
     mp = rom.arm9_module_params()

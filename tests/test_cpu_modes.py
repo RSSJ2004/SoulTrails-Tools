@@ -77,7 +77,7 @@ class CpuModes(unittest.TestCase):
             out = d / "gen"
             driver.run([Module("main", 0x02000000, binary.read_bytes())], out, None, seed_files=[seeds], scan=False)
             sh(CC, "-O1", "-w", "-I", ROOT / "runtime", "-I", out, "-I", d, C / "harness.c",
-               ROOT / "runtime" / "strecomp.c", *sorted(out.glob("*.c")), "-o", d / "harness")
+               *sorted((ROOT / "runtime").glob("*.c")), *sorted(out.glob("*.c")), "-o", d / "harness")
             got = sh(d / "harness", binary)
             modes, v5 = got.split("--\n")
             n = (syms["results_end"] - syms["results"]) // 4

@@ -284,6 +284,12 @@ def rom(files: dict[str, bytes], arm9: bytes = b"\0" * 16, arm9_ram: int = 0x020
     struct.pack_into("<II", out, 0x40, fnt_off, len(fnt))
     struct.pack_into("<II", out, 0x48, fat_off, 8 * len(blobs))
     struct.pack_into("<II", out, 0x50, ovt_off, 32 * len(overlays))
+    crc = 0xFFFF   # CRC-16/MODBUS de la cabecera, como en una ROM real
+    for b in out[:0x15E]:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    struct.pack_into("<H", out, 0x15E, crc)
     return bytes(out)
 
 
@@ -341,3 +347,89 @@ def code_with_data(base: int, n_funcs: int, n_leaf: int, n_data: int, seed: int 
     info = {"funcs": funcs, "leaves": leaves, "table": table, "bad_undef": bad_undef,
             "off_end": off_end, "data": dstart}
     return struct.pack(f"<{len(words)}I", *words), info
+
+
+# ------------------------------------------------- formatos de las SWI del BIOS (GBATEK)
+def rl_compress(data: bytes) -> bytes:
+    """RLUnComp (SWI 14h/15h): flag bit7=1 -> (flag&7F)+3 copias de un byte; si no, flag+1 literales."""
+    out = bytearray([0x30]) + len(data).to_bytes(3, "little")
+    i = 0
+    while i < len(data):
+        run = 1
+        while i + run < len(data) and data[i + run] == data[i] and run < 130:
+            run += 1
+        if run >= 3:
+            out += bytes([0x80 | (run - 3), data[i]])
+            i += run
+            continue
+        j = i
+        while j < len(data) and j - i < 128 and not (j + 2 < len(data) and data[j] == data[j + 1] == data[j + 2]):
+            j += 1
+        out.append(j - i - 1)
+        out += data[i:j]
+        i = j
+    return bytes(out + bytes(-len(out) % 4))
+
+
+def huff_compress(data: bytes, bits: int) -> bytes:
+    """HuffUnComp (SWI 13h) con unidades de 4 u 8 bits. Árbol en anchura para que los
+    desplazamientos de 6 bits alcancen (vale para alfabetos pequeños como los de los tests)."""
+    import heapq
+    units = [u for b in data for u in ((b & 0xF, b >> 4) if bits == 4 else (b,))]
+    freq: dict[int, int] = {}
+    for u in units:
+        freq[u] = freq.get(u, 0) + 1
+    if len(freq) == 1:
+        freq[(units[0] + 1) % (1 << bits)] = 0
+    heap = [(n, k, ("leaf", s)) for k, (s, n) in enumerate(sorted(freq.items()))]
+    heapq.heapify(heap)
+    k = len(heap)
+    while len(heap) > 1:
+        a, b = heapq.heappop(heap), heapq.heappop(heap)
+        heapq.heappush(heap, (a[0] + b[0], k, ("node", a[2], b[2])))
+        k += 1
+    root = heap[0][2]
+    codes: dict[int, str] = {}
+
+    def walk(n, pre):
+        if n[0] == "leaf":
+            codes[n[1]] = pre
+        else:
+            walk(n[1], pre + "0")
+            walk(n[2], pre + "1")
+    walk(root, "")
+    # Tabla: T[0] = tamaño, T[1] = raíz, par k en T[2+2k], T[3+2k]
+    table = [0, None]
+    pairs = []          # (índice del nodo padre en la tabla, nodo)
+    queue = [(1, root)]
+    while queue:
+        idx, n = queue.pop(0)
+        if n[0] == "leaf":
+            table[idx] = n[1]
+            continue
+        kpair = len(pairs)
+        pairs.append(n)
+        off = kpair - (idx >> 1)
+        assert 0 <= off < 64, "árbol demasiado ancho para el test"
+        table[idx] = off | (0x80 if n[1][0] == "leaf" else 0) | (0x40 if n[2][0] == "leaf" else 0)
+        table += [None, None]
+        queue += [(2 + 2 * kpair, n[1]), (3 + 2 * kpair, n[2])]
+    table = [0 if v is None else v for v in table]
+    while len(table) % 4:
+        table.append(0)
+    table[0] = len(table) // 2 - 1
+    bitstr = "".join(codes[u] for u in units)
+    bitstr += "0" * (-len(bitstr) % 32)
+    words = b"".join(struct.pack("<I", int(bitstr[i:i + 32], 2)) for i in range(0, len(bitstr), 32))
+    hdr = bytes([0x20 | bits]) + len(data).to_bytes(3, "little")
+    return hdr + bytes(table) + words
+
+
+def diff_filter(data: bytes, sixteen: bool) -> bytes:
+    """Diff8bitUnFilter / Diff16bitUnFilter (SWI 16h/18h): se guardan las diferencias."""
+    hdr = bytes([0x82 if sixteen else 0x81]) + len(data).to_bytes(3, "little")
+    if sixteen:
+        vals = struct.unpack(f"<{len(data) // 2}H", data)
+        diffs = [vals[0]] + [(vals[i] - vals[i - 1]) & 0xFFFF for i in range(1, len(vals))]
+        return hdr + struct.pack(f"<{len(diffs)}H", *diffs)
+    return hdr + bytes([data[0]] + [(data[i] - data[i - 1]) & 0xFF for i in range(1, len(data))])

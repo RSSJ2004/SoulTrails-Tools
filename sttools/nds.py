@@ -248,6 +248,15 @@ class Rom:
         }
         return r
 
+    def header_crc(self) -> tuple[int, int]:
+        """(CRC guardado en 0x15E, CRC calculado de 0x000-0x15D). CRC-16/MODBUS."""
+        crc = 0xFFFF
+        for b in self.raw[:0x15E]:
+            crc ^= b
+            for _ in range(8):
+                crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+        return struct.unpack_from("<H", self.raw, 0x15E)[0], crc
+
     # --- sistema de archivos
     def file_range(self, fid: int) -> tuple[int, int]:
         return struct.unpack_from("<II", self.raw, self.header["fat_off"] + fid * 8)

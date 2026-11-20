@@ -63,7 +63,7 @@ class RecompEndToEnd(unittest.TestCase):
                                  seed_files=[d / "seeds.txt", misses], scan=False)
                 srcs = sorted(out.glob("*.c"))
                 sh(CC, "-O1", "-w", "-I", ROOT / "runtime", "-I", out, "-I", T, "-I", d,
-                   T / "harness.c", T / "progs_arm.c", T / "progs_thumb.c", ROOT / "runtime" / "strecomp.c", *srcs,
+                   T / "harness.c", T / "progs_arm.c", T / "progs_thumb.c", *sorted((ROOT / "runtime").glob("*.c")), *srcs,
                    "-o", d / "harness", "-lm")
                 r = subprocess.run([d / "harness", d / "p.bin", misses], capture_output=True, text=True)
                 if r.returncode != 3:

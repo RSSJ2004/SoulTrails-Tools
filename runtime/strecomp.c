@@ -28,8 +28,7 @@ static void default_io_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
     fprintf(stderr, "[st] IO write%d %08X = %08X\n", size * 8, addr, v);
 }
 static void default_swi(StCpu* c, uint32_t num) {
-    (void)c;
-    fprintf(stderr, "[st] SWI %02X sin implementar\n", num);
+    if (!st_bios_swi(c, num)) fprintf(stderr, "[st] SWI %02X sin implementar\n", num);
 }
 static void default_unimpl(StCpu* c, uint32_t addr, uint32_t insn, int thumb) {
     (void)c;
@@ -60,8 +59,15 @@ static void default_bkpt(StCpu* c, uint32_t num) {
     st_platform.halt(c, why);
 }
 
+/* Sin plataforma: cada espera "dura" un VBlank (suficiente para avanzar sin pantalla) */
+static int default_idle(StCpu* c) {
+    (void)c;
+    st_raise_irq(ST_IRQ_VBLANK);
+    return 1;
+}
+
 StPlatform st_platform = {default_io_read, default_io_write, default_swi, default_unimpl, default_miss, default_halt,
-                          default_coproc, default_bkpt};
+                          default_coproc, default_bkpt, default_idle};
 
 /* ---------------------------------------------------------------- memoria */
 uint8_t* st_ptr(uint32_t addr, uint32_t size) {
@@ -83,29 +89,29 @@ uint8_t* st_ptr(uint32_t addr, uint32_t size) {
 
 uint32_t st_read8(StCpu* c, uint32_t a) {
     uint8_t* p = st_ptr(a, 1);
-    return p ? *p : st_platform.io_read(c, a, 1) & 0xFF;
+    return p ? *p : st_io_read(c, a, 1) & 0xFF;
 }
 uint32_t st_read16(StCpu* c, uint32_t a) {
     uint8_t* p = st_ptr(a, 2);
     if (p) { uint16_t v; memcpy(&v, p, 2); return v; }
-    return st_platform.io_read(c, a, 2) & 0xFFFF;
+    return st_io_read(c, a, 2) & 0xFFFF;
 }
 uint32_t st_read32(StCpu* c, uint32_t a) {
     uint8_t* p = st_ptr(a, 4);
     if (p) { uint32_t v; memcpy(&v, p, 4); return v; }
-    return st_platform.io_read(c, a, 4);
+    return st_io_read(c, a, 4);
 }
 void st_write8(StCpu* c, uint32_t a, uint8_t v) {
     uint8_t* p = st_ptr(a, 1);
-    if (p) *p = v; else st_platform.io_write(c, a, v, 1);
+    if (p) *p = v; else st_io_write(c, a, v, 1);
 }
 void st_write16(StCpu* c, uint32_t a, uint16_t v) {
     uint8_t* p = st_ptr(a, 2);
-    if (p) memcpy(p, &v, 2); else st_platform.io_write(c, a, v, 2);
+    if (p) memcpy(p, &v, 2); else st_io_write(c, a, v, 2);
 }
 void st_write32(StCpu* c, uint32_t a, uint32_t v) {
     uint8_t* p = st_ptr(a, 4);
-    if (p) memcpy(p, &v, 4); else st_platform.io_write(c, a, v, 4);
+    if (p) memcpy(p, &v, 4); else st_io_write(c, a, v, 4);
 }
 int st_load(uint32_t addr, const void* data, size_t size) {
     const uint8_t* s = (const uint8_t*)data;

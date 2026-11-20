@@ -61,9 +61,33 @@ typedef struct StPlatform {
      * "undefined"). read=1 para MRC (el valor devuelto va a Rd). */
     uint32_t (*coproc)(StCpu*, int cp, int op1, int crn, int crm, int op2, uint32_t v, int read);
     void (*bkpt)(StCpu*, uint32_t num);
+    /* El juego espera (Halt/IntrWait/VBlankIntrWait): avanzar el tiempo (dibujar el cuadro,
+     * leer controles, sonido...) y levantar las IRQ que toquen con st_raise_irq. Devuelve 0
+     * si no puede avanzar más (p. ej. al cerrar la ventana): la espera se aborta con halt. */
+    int (*idle)(StCpu*);
 } StPlatform;
 
 extern StPlatform st_platform;
+
+/* ---- IRQ y BIOS (runtime/st_bios.c) ----
+ * IME/IE/IF viven en el runtime; el resto de IO va a la plataforma. Las IRQ se entregan en
+ * los puntos de espera (SWI Halt/IntrWait/VBlankIntrWait) o cuando alguien llama a
+ * st_irq_service, reproduciendo lo que hace el BIOS del ARM9: modo IRQ, push {r0-r3,r12,lr}
+ * en la pila IRQ, llamada a [DTCM+0x3FFC], pop y retorno con SPSR. */
+#define ST_IO_IME 0x04000208u
+#define ST_IO_IE 0x04000210u
+#define ST_IO_IF 0x04000214u
+#define ST_IRQ_VBLANK 0x1u
+#define ST_IRQ_HBLANK 0x2u
+#define ST_IRQ_VCOUNT 0x4u
+#define ST_IRQ_BIOS_RET 0x0FFFFFE0u   /* LR del manejador: vuelta al "BIOS" */
+typedef struct StIrqState { uint32_t ime, ie, if_; uint32_t served; } StIrqState;
+extern StIrqState st_irq;
+void st_raise_irq(uint32_t mask);
+int st_irq_service(StCpu* c);                       /* 1 si ejecutó el manejador del juego */
+int st_bios_swi(StCpu* c, uint32_t num);            /* 1 si es una SWI del BIOS conocida */
+uint32_t st_io_read(StCpu* c, uint32_t addr, int size);
+void st_io_write(StCpu* c, uint32_t addr, uint32_t v, int size);
 
 /* ---- Memoria ---- */
 #define ST_MAIN_RAM_SIZE (4u * 1024 * 1024)

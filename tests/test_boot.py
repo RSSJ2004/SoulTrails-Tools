@@ -85,7 +85,7 @@ class Boot(unittest.TestCase):
 
             out = d / "gen"
             (d / "boot_addrs.h").write_text(f"#define ADDR_results 0x{syms['results']:08X}u\n")
-            rt = [ROOT / "runtime" / "strecomp.c", ROOT / "runtime" / "st_rom.c"]
+            rt = sorted((ROOT / "runtime").glob("*.c"))
             misses = d / "misses.txt"
             misses.write_text("")
             # ov_main solo se alcanza con una dirección calculada (mov r3, #0x2200000): lo

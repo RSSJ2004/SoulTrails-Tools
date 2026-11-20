@@ -59,6 +59,8 @@ class Pipeline(unittest.TestCase):
             sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
             info = sh(*stk, "rom", env=env)
             self.assertIn("overlays ARM9: 1", info)
+            self.assertIn("CRC cabecera", info)
+            self.assertNotIn("NO COINCIDE", info)
             out = sh(*stk, "assets", env=env)
             self.assertIn("Errores: 0", out, out)
             assets = d / "work" / "assets"

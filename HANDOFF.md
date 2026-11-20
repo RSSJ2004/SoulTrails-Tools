@@ -29,7 +29,7 @@ Peticiones explícitas del usuario:
   debería mantener ese criterio o hablarlo con el usuario.
 
 ## Estado actual
-Todos los tests pasan (`python -m unittest discover -s tests` → 20 OK; además
+Todos los tests pasan (`python -m unittest discover -s tests` → 22 OK; además
 `frontend/build/layout_test` e `input_test`). **Nada se ha probado aún con la ROM real**: el usuario
 va a hacerlo.
 
@@ -48,6 +48,7 @@ sttools/recomp/        recompilador estático
   codegen.py           una función C por función guest; goto para saltos internos, ST_CALL directo si el destino se resuelve (mismo módulo o estático), si no por el despachador; switch de despacho para saltos indirectos
   driver.py            entrada (--rom o --bin), semillas de Ghidra/archivos/fallos
 runtime/st_rom.[ch]    lector de ROM y arranque (st_boot_run)
+runtime/st_bios.c      IME/IE/IF, entrada a IRQ como el BIOS, SWI del BIOS por HLE
 port/main.c            ejecutable soultrails_port --rom X --misses F
 runtime/strecomp.[ch]  StCpu, mapa de memoria DS (RAM 4MB, ITCM, DTCM dinámica vía CP15, WRAM, paleta, VRAM, OAM), st_call/despachador, st_override (reemplazos nativos), overlays cargados, registro de fallos, StPlatform (callbacks IO/SWI/unimpl/miss)
 port/CMakeLists.txt    compila runtime + build/recomp + soultrails_port
@@ -56,7 +57,7 @@ frontend/              SDL2 + Dear ImGui 1.91.5 (FetchContent)
   input.*              InputMapper sin SDL: acciones, 3 asignaciones por acción, palanca→toque, gestos (tajo, giro, voltereta, tocar Link, tocar cursor), cursor con palanca derecha, micrófono, controls.ini
   main.cpp             app: pestañas Pantallas/Controles, "pulsa para asignar", mando con hotplug, lápiz virtual; ScreenSource = interfaz que implementará el juego (hoy TestPattern)
 ghidra_scripts/ExportFunctions.java  exporta {name, addr, size, block, thumb, c}
-tests/                 boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + test_boot, cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
+tests/                 bios/ (bios.c, bios_thumb.c) + test_bios, boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + test_boot, cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
 ```
 
 ### Comandos de stk
@@ -87,7 +88,7 @@ tests/                 boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + t
 ## Qué agregar / reparar (por prioridad)
 
 ### A. Validar con la ROM real (lo primero)
-1. `stk rom`: comprobar que se encuentra ModuleParams (marca `21 06 C0 DE DE C0 06 21`, struct en
+1. `stk rom`: ahora muestra si el **CRC de la cabecera** (0x15E) coincide. Comprobar que se encuentra ModuleParams (marca `21 06 C0 DE DE C0 06 21`, struct en
    marca−0x1C), que el ARM9 se descomprime bien (BLZ) y que salen los autoloads ITCM/DTCM con
    direcciones razonables (ITCM ~0x01FF8000, DTCM ~0x027E0000).
 2. `stk assets`: revisar `report.txt`. Probables: formatos propios del juego, BMG con variantes
@@ -123,8 +124,26 @@ tests/                 boot/ (crt0.S, game.c, game.ld, ov0/ov1.c, harness.c) + t
    traducida en otro overlay significa "overlay no cargado", no algo nuevo que aprender.
 3. **ARM7**: no se recompila. Lo normal es HLE: emular por IPC/FIFO lo que hace el ARM7 (sonido,
    táctil, RTC, micrófono, Wi-Fi no).
-4. Interrupciones/VBlank: `SWI WaitByLoop/IntrWait/VBlankIntrWait` deben ceder al frontend y
-   ejecutar los handlers IRQ del juego (direcciones guardadas en DTCM).
+4. ~~Interrupciones/VBlank~~ **hecho** (`runtime/st_bios.c`, `tests/test_bios.py`):
+   - IME/IE/IF viven en el runtime (`st_io_read/st_io_write` interceptan 0x04000208/210/214;
+     escribir 1 en IF reconoce). `st_raise_irq(mask)` las levanta.
+   - `st_irq_service`: igual que el BIOS del ARM9 (modo IRQ, SPSR, `push {r0-r3,r12,lr}` en la
+     pila IRQ, llamada a `[DTCM+0x3FFC]`, `pop` y retorno restaurando CPSR). Se entrega en
+     Halt/IntrWait/VBlankIntrWait. Nuevo `StPlatform.idle`: la plataforma avanza un cuadro y
+     levanta las IRQ (por defecto, un VBlank por espera).
+   - SWI del BIOS por HLE: Div, Sqrt, CpuSet, CpuFastSet, GetCRC16 (CRC-16/MODBUS), IsDebugger,
+     BitUnPack, LZ77 (WRAM/VRAM), Huffman 4/8 bits, RL (WRAM/VRAM), Diff8/Diff16, WaitByLoop,
+     Halt, IntrWait, VBlankIntrWait, SoftReset (detiene). Desconocidas → aviso.
+   - Pendiente: entregar IRQ también fuera de las esperas (al escribir IME/IE o hacer `msr` que
+     desbloquee I, o cada N llamadas) si algún sistema del juego lo necesita; timers y DMA.
+   - **Pendiente de diseño: hilos del SDK.** El `OS_IrqHandler` del SDK puede cambiar de hilo
+     reescribiendo el marco del BIOS, y `OS_SaveContext/OS_LoadContext` saltan al punto donde
+     otro hilo se quedó. En un recompilador estático eso no se puede hacer con una sola pila C.
+     Propuesta (como N64Recomp): **una fibra/hilo nativo por hilo del juego**, con un testigo para
+     que solo corra uno a la vez; enganchar SaveContext/LoadContext (localizarlos por su patrón
+     de instrucciones, no por el código del decomp). Hoy el runtime **detecta** el cambio de hilo
+     en la IRQ y se detiene con "cambio de hilo desde la IRQ (falta la capa de hilos)". Decidir
+     con el usuario cuando aparezca con la ROM real.
 5. ~~Huecos conocidos~~ **hecho** (`tests/test_cpu_modes.py`):
    - Bancos de registros por modo en `StCpu` (`bank_r13/r14/spsr`, `usr_r8_12/fiq_r8_12`);
      `st_set_mode` los cambia, y `st_msr` lo llama al cambiar el modo. En modo usuario MSR solo
