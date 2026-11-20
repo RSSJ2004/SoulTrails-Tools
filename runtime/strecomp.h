@@ -107,6 +107,14 @@ void st_hw_set_cart(const uint8_t* data, size_t size, uint32_t chip_id);
 void st_clock_advance(uint32_t cycles);
 uint64_t st_clock(void);
 void st_hw_frame_c(StCpu* c);               /* como st_hw_frame, con la CPU para los DMA del VBlank */
+/* Hilos del juego como fibras nativas (st_thread.c) */
+extern volatile int st_fiber_resumed;
+extern unsigned long st_thread_switches;
+int st_thread_switch(StCpu* c, uint32_t target_pc, uint32_t target_sp, uint32_t old_sp);
+uint32_t st_thread_resume_pc(void);
+void st_thread_note_user_sp(uint32_t old_sp);
+void st_thread_forget_user_sp(void);
+int st_thread_take_prev_sp(uint32_t* sp);
 /* IRQ fuera de las esperas: se comprueba al entrar en cada función generada (ST_TRACE) */
 extern volatile int st_irq_pending;
 void st_irq_poll(StCpu* c);
@@ -271,6 +279,15 @@ extern volatile uint32_t st_trace_pos;
 #define ST_CALL_DYN_EXPR(ret, a) do { uint32_t t_ = (a); st_call(c, t_); if (c->next_pc != (ret)) { ST_TAIL_DYN(c->next_pc); } } while (0)
 /* Llamada cuyo LR se cargó con otra dirección: al volver se sigue donde diga next_pc */
 #define ST_CALL_THEN_RET(a) do { uint32_t t_ = (a); st_call(c, t_); ST_TAIL_DYN(c->next_pc); } while (0)
+/* Llamadas con reanudación: si el destino vuelve a otra dirección (un hilo que se reanuda tras
+ * SaveContext), se busca entre los puntos de vuelta de esta función (st_resume) */
+#define ST_RESUME_OR_TAIL(ret) do { if (c->next_pc != (ret)) { jr = c->next_pc; goto st_resume; } } while (0)
+#define ST_CALLR(fn, ret) do { fn(c); ST_RESUME_OR_TAIL(ret); } while (0)
+#define ST_CALLR_DYN(a, ret) do { st_call(c, (a)); ST_RESUME_OR_TAIL(ret); } while (0)
+#define ST_CALLR_DYN_EXPR(ret, a) do { uint32_t t_ = (a); st_call(c, t_); ST_RESUME_OR_TAIL(ret); } while (0)
+/* Retorno de excepción: si reanudó otra fibra, volver hasta quien llamó a SaveContext */
+#define ST_EXC_RETURN(v) do { uint32_t er_ = st_exception_return(c, (v)); \
+    if (st_fiber_resumed) { st_fiber_resumed = 0; ST_RETURN(er_); } ST_INDIRECT(er_); } while (0)
 #define ST_CALL_DYN(a, ret) do { st_call(c, (a)); if (c->next_pc != (ret)) { ST_TAIL_DYN(c->next_pc); } } while (0)
 
 #ifdef __cplusplus

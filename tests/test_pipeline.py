@@ -72,9 +72,9 @@ class Pipeline(unittest.TestCase):
             gen = (d / "work" / "build" / "recomp")
             table = (gen / "recomp_table.c").read_text()
             self.assertIn('"ov000", 0', table)          # el overlay es un módulo propio
-            code = "".join(p.read_text() for p in gen.glob("recomp_0*.c"))
+            code = "".join(p.read_text() for p in gen.glob("rc_*.c"))
             self.assertIn("f_ov000_02100000", code)       # función del overlay
-            self.assertIn(f"ST_CALL(f_{fib:08X},", code)    # llamada directa overlay -> estático
+            self.assertRegex(code, rf"ST_CALLR?\(f_{fib:08X},")    # llamada directa overlay -> estático
             status = sh(*stk, "status", env=env)
             self.assertIn("recomp", status)
 
@@ -155,8 +155,8 @@ class HiddenCall(unittest.TestCase):
             sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
             out = sh(*stk, "recomp", "--learn", "--timeout", "20", env=env)
             self.assertIn("terminó sin fallos", out, out)
-            code = "".join(p.read_text() for p in (d / "work" / "build" / "recomp").glob("recomp_0*.c"))
-            self.assertIn("ST_CALL_DYN_EXPR(0x02000010u", code)
+            code = "".join(p.read_text() for p in (d / "work" / "build" / "recomp").glob("rc_*.c"))
+            self.assertIn("ST_CALLR_DYN_EXPR(0x02000010u", code)
 
     def test_ldr_lr_bx(self):
         """'ldr lr, =X' + 'bx rX': llamada que al volver sigue en X (manejador de IRQ del SDK)."""
@@ -177,4 +177,23 @@ class HiddenCall(unittest.TestCase):
             stk = [sys.executable, ROOT / "stk.py"]
             sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
             out = sh(*stk, "recomp", "--learn", "--timeout", "20", env=env)
+            self.assertIn("terminó sin fallos", out, out)
+
+
+@unittest.skipUnless(ARMCC and shutil.which("cmake"), "falta arm-none-eabi-gcc o cmake")
+class Threads(unittest.TestCase):
+    def test_fibers_save_load_context(self):
+        """Dos hilos con SaveContext/LoadContext: cada uno corre en su fibra y A se reanuda tras
+        su SaveContext (punto st_resume) cuando B le devuelve el control."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            sh(ARMCC, "-mcpu=arm946e-s", "-nostdlib", "-Ttext=0x02000000", "-e", "_start",
+               ROOT / "tests" / "threads" / "threads.S", "-o", d / "t.elf")
+            sh("arm-none-eabi-objcopy", "-O", "binary", d / "t.elf", d / "t.bin")
+            rom = B.rom({}, arm9=(d / "t.bin").read_bytes() + bytes(64))
+            (d / "game.nds").write_bytes(rom)
+            env = dict(os.environ, STK_HOME=str(d / "work"))
+            stk = [sys.executable, ROOT / "stk.py"]
+            sh(*stk, "init", "--rom", d / "game.nds", "--version", "eur", env=env)
+            out = sh(*stk, "recomp", "--learn", "--timeout", "30", env=env)
             self.assertIn("terminó sin fallos", out, out)

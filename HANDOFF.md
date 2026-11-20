@@ -177,6 +177,20 @@ táctil (PXI tag 6) y llega a un bucle sin accesos a memoria en `arm9:0202852C` 
 sp=0204E800): `OS_Halt` = CP15 c7,c0,4 "esperar IRQ", que el runtime ignoraba. Ahora `st_mcr`
 pasa un cuadro (idle) si no hay IRQ pendiente y la atiende si el CPSR lo permite.
 
+**Fase 1.5: hilos como fibras (`runtime/st_thread.c`)**. Con la ROM: "cambio de hilo desde la
+IRQ". Diseño: una fibra nativa por hilo del juego, identificada por la pila (SP de usuario/sistema)
+del hilo. Puntos de cambio: (1) `st_irq_service` cuando el SDK reescribe el marco del BIOS
+(nuevo PC = lr-4, SPSR, registros de usuario ya cargados) y (2) `st_exception_return` tras una
+carga de contexto completo `LDM {r0-r14}^` (el codegen llama a `st_thread_note_user_sp`).
+`st_thread_switch` reanuda la fibra con ese SP o crea una nueva que empieza en el PC. Una fibra
+reanudada en (2) vuelve con `st_fiber_resumed` y `ST_EXC_RETURN` hace `ST_RETURN` hasta la función
+que llamó a SaveContext; todas las llamadas usan `ST_CALLR*` y, si vuelven a otra dirección, saltan
+a `st_resume` (switch con los puntos de vuelta de llamada de la función). Windows: CreateFiber;
+resto: ucontext (probado aquí con `tests/threads/threads.S` vía `Threads` en test_pipeline; las
+fibras de Windows aún no se han probado).
+**Compilación incremental real**: archivos `rc_<módulo>_<rango 32 KB>.c` con sus propios
+prototipos; aprender una función solo recompila su archivo y los que la llaman.
+
 **Fase 2 empezada (sin probar con la ROM)**: `runtime/st_vram.c` (bancos A-I con VRAMCNT: BG/OBJ
 de cada motor por páginas de 16 KB, LCDC, ranuras de texturas y paletas, paletas extendidas;
 `st_ptr` de 0x06 pasa por aquí) y `runtime/st_gpu2d.c` (motores 2D por software, cuadro entero:

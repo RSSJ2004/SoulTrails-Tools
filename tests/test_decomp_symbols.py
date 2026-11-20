@@ -30,7 +30,7 @@ class AutoSeeds(unittest.TestCase):
             out = Path(d) / "out"
             res = driver.run([Module("main", BASE, data)], out, None, None, [seeds], scan=False)
             self.assertEqual(res["named"], 2)
-            src = "".join(p.read_text() for p in out.glob("recomp_*.c"))
+            src = "".join(p.read_text() for p in out.glob("rc_*.c"))
             self.assertRegex(src, r"main 0x02000000 ARM, 3 instr\. FuncArm")
             self.assertRegex(src, r"main 0x02000010 Thumb, 3 instr\. FuncThumb")
 

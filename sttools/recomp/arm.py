@@ -45,7 +45,7 @@ def _write_reg(rd: int, val: str, s: bool, *, link_ret=False) -> str:
     if rd != 15:
         return f"c->r[{rd}] = {val};"
     if s:  # retorno de excepción: CPSR = SPSR (puede volver a Thumb)
-        return f"ST_INDIRECT(st_exception_return(c, {val}));"
+        return f"ST_EXC_RETURN({val}); /* ST_INDIRECT st_exception_return */"
     return f"ST_INDIRECT({val});"
 
 
@@ -339,6 +339,10 @@ def block_transfer(ins: Ins, w: int, pc: int) -> None:
     lines.append(f"uint32_t a = ({start}) & ~3u;")
     user_bank = s and not (load and 15 in regs)   # LDM/STM ^ sin PC: registros de usuario
     if load:
+        if user_bank and (w & 0x7FFF) == 0x7FFF:
+            # Carga de un contexto completo de usuario (OS_LoadContext / cambio de hilo del SDK):
+            # se apunta la pila del hilo saliente por si el retorno de excepción cambia de hilo
+            lines.append("st_thread_note_user_sp(st_user_reg(c, 13));")
         for i, r in enumerate(regs):
             lines.append(f"uint32_t v{r} = st_read32(c, a + {4 * i});")
         # ARMv5 con la base en la lista: hay escritura si es el único registro o no es el
@@ -351,7 +355,7 @@ def block_transfer(ins: Ins, w: int, pc: int) -> None:
             lines.append(f"c->r[{rn}] = {new};")
         if 15 in regs:
             if s:
-                lines.append("ST_INDIRECT(st_exception_return(c, v15));")
+                lines.append("ST_EXC_RETURN(v15); /* ST_INDIRECT st_exception_return */")
                 ins.kind = INDIRECT
             elif rn == 13:
                 lines.append("ST_RETURN(v15);")

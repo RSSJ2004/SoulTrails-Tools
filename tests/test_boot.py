@@ -102,7 +102,7 @@ class Boot(unittest.TestCase):
                 learned.append(r.stdout.strip())
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertEqual(len(learned), 2, learned)          # un fallo por overlay
-            gen = "".join(p.read_text() for p in out.glob("recomp_*.c"))
+            gen = "".join(p.read_text() for p in out.glob("rc_*.c"))
             self.assertIn("f_ov000_02200000", gen)
             self.assertIn("f_ov001_02200000", gen)
             got = [int(x, 16) for x in r.stdout.split()]

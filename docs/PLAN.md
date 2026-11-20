@@ -31,9 +31,10 @@ de resolución interna en ese equipo, y que funcione también en la integrada.
    sustituidos por `st_override` en las direcciones que da objdiff.
 
 Estado (2026-11): hechos IPCSYNC con eco y cuenta atrás, FIFO del PXI con respuesta por tag
-(RTC con fecha del PC), marcas de tags del ARM7, IRQ en bucles, VCOUNT/DISPSTAT,
+(RTC con fecha del PC), marcas de tags del ARM7, IRQ en bucles, OS_Halt, hilos como fibras
+(cambio desde la IRQ y por LoadContext), VCOUNT/DISPSTAT,
 cartucho B7/B8, DMA, timers, zona del firmware e IRQ fuera de las esperas. Pendiente: respuestas
-del ARM7 por tag del PXI, copia de seguridad (SPI) y fibras para los hilos.
+específicas del ARM7 por tag (táctil, sonido, energía), copia de seguridad.
 
 **Hecho cuando**: `--learn` llega a cientos de cuadros sin fallos y el juego espera input.
 

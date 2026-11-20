@@ -47,7 +47,7 @@ class Codegen(unittest.TestCase):
             p = generate(self.DATA, BASE | 1, out)
             f = p.functions[("main", BASE)]
             self.assertIn(BASE + 6, f.insns)  # se decodificó la mitad del BL
-            src = "".join(x.read_text() for x in sorted(out.glob("recomp_*.c")))
+            src = "".join(x.read_text() for x in sorted(out.glob("rc_*.c")))
             for lbl in set(__import__("re").findall(r"goto (L_[0-9A-F]{8});", src)):
                 self.assertIn(f"{lbl}:", src, f"falta la etiqueta {lbl}")
             if CC:

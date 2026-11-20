@@ -1,6 +1,7 @@
 """Generación de C a partir de las funciones analizadas."""
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -84,6 +85,8 @@ class Generator:
                 targets.add(ins.next)
         if has_indirect:
             targets.update(addrs)
+        resume = self.resume_points(f)
+        targets.update(resume)
         tbit = 1 if f.thumb else 0
         sym = self.prog.names.get((f.module.name, f.addr))
         sym = f" {sym.replace('*/', '')}" if sym else ""
@@ -91,6 +94,8 @@ class Generator:
                f"void {f.cname}(StCpu* c) {{"]
         if has_indirect:
             out.append("    uint32_t jt;")
+        if resume:
+            out.append("    uint32_t jr;")
         out.append(f"    ST_TRACE({h(f.addr | tbit)});")
         out.append(f"    goto {label(f.addr)};")
         for i, a in enumerate(addrs):
@@ -116,9 +121,29 @@ class Generator:
                 out.append(f"    case {h(a | tbit)}: goto {label(a)};")
             out.append("    default: ST_TAIL_DYN(jt);")
             out.append("    }")
+        if resume:
+            # Un hilo reanudado tras SaveContext vuelve a la instrucción siguiente a esa llamada
+            out.append("st_resume:")
+            out.append("    switch (jr) {")
+            for a in resume:
+                out.append(f"    case {h(a | tbit)}: goto {label(a)};")
+            out.append("    default: ST_TAIL_DYN(jr);")
+            out.append("    }")
         out.append("}")
         del uses_dispatch
         return "\n".join(out)
+
+    @staticmethod
+    def resume_points(f: Function) -> list[int]:
+        """Vueltas de llamada dentro de la función (destinos de st_resume)."""
+        pts = []
+        for a in sorted(f.insns):
+            ins = f.insns[a]
+            if ins.next not in f.insns:
+                continue
+            if ins.kind == CALL or "ST_CALL_DYN_EXPR(" in ins.code:
+                pts.append(ins.next)
+        return pts
 
     def emit_insn(self, f: Function, ins) -> str:
         tbit = 1 if f.thumb else 0
@@ -130,13 +155,17 @@ class Generator:
                 return f"{{ ST_POLL(); goto {label(tgt)}; }}" if tgt <= ins.addr else f"goto {label(tgt)};"
             name = self.call_target(f, ins.target)
             return f"ST_TAIL({name});" if name else f"ST_TAIL_DYN({h(ins.target)});"
+        resumable = ins.next in f.insns
+        r = "R" if resumable else ""
         if ins.kind == CALL:
             ret = h(ins.next | tbit)
             if ins.target is None:
-                return f"{{ {ins.code} ST_CALL_DYN({ins.table_reg}, {ret}); }}"
+                return f"{{ {ins.code} ST_CALL{r}_DYN({ins.table_reg}, {ret}); }}"
             name = self.call_target(f, ins.target)
-            call = f"ST_CALL({name}, {ret});" if name else f"ST_CALL_DYN({h(ins.target)}, {ret});"
+            call = f"ST_CALL{r}({name}, {ret});" if name else f"ST_CALL{r}_DYN({h(ins.target)}, {ret});"
             return f"{{ {ins.code} {call} }}"
+        if resumable and "ST_CALL_DYN_EXPR(" in ins.code:
+            return ins.code.replace("ST_CALL_DYN_EXPR(", "ST_CALLR_DYN_EXPR(", 1)
         if ins.kind == TABLE:
             cases = " ".join(f"case {k}: goto {label(a)};" if a in f.insns else f"case {k}: ST_TAIL_DYN({h(a | tbit)});"
                              for k, a in enumerate(ins.table))
@@ -145,15 +174,21 @@ class Generator:
         return ins.code
 
     # ------------------------------------------------------------- archivos
-    def write(self, out_dir: Path, per_file: int = 400) -> dict:
+    def write(self, out_dir: Path, bucket: int = 0x8000) -> dict:
+        """Un archivo por módulo y rango fijo de direcciones (32 KB) con sus propios prototipos:
+        aprender una función nueva solo cambia el archivo de su rango y los que la llaman, y la
+        compilación incremental de --learn no rehace todo."""
         out_dir.mkdir(parents=True, exist_ok=True)
         funcs = sorted(self.prog.functions.values(), key=lambda f: (f.module.name, f.addr))
+        groups: dict[tuple[str, int], list[Function]] = {}
+        for f in funcs:
+            groups.setdefault((f.module.name, f.addr // bucket), []).append(f)
         files = []
-        for i in range(0, len(funcs), per_file):
-            chunk = funcs[i:i + per_file]
-            path = out_dir / f"recomp_{i // per_file:04d}.c"
-            body = [HEADER, '#include "recomp_funcs.h"', ""]
-            body += [self.emit_function(f) + "\n" for f in chunk]
+        for (mname, b), chunk in sorted(groups.items()):
+            path = out_dir / f"rc_{mname}_{b * bucket:08X}.c"
+            code = [self.emit_function(f) + "\n" for f in chunk]
+            used = sorted(set(re.findall(r"\b(f_[0-9A-Za-z_]+)\(", "".join(code))))
+            body = [HEADER] + [f"void {n}(StCpu* c);" for n in used] + [""] + code
             write_if_changed(path, "\n".join(body))
             files.append(path.name)
         # Prototipos
@@ -180,9 +215,10 @@ class Generator:
         tbl.append(f"const unsigned st_module_count = {len(mods)};")
         write_if_changed(out_dir / "recomp_table.c", "\n".join(tbl) + "\n")
         files.append("recomp_table.c")
-        for old in out_dir.glob("recomp_*.c"):
-            if old.name not in files:  # sobran de una ejecución anterior con más archivos
-                _retry(old.unlink, old, "borrar")
+        for pattern in ("recomp_*.c", "rc_*.c"):
+            for old in out_dir.glob(pattern):
+                if old.name not in files:  # sobran de una ejecución anterior
+                    _retry(old.unlink, old, "borrar")
         write_if_changed(out_dir / "CMakeLists.txt",
             "# Generado por stk recomp\n"
             "file(GLOB ST_RECOMP_SOURCES ${CMAKE_CURRENT_LIST_DIR}/*.c)\n"

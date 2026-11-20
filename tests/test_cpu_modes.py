@@ -81,7 +81,7 @@ class CpuModes(unittest.TestCase):
             got = sh(d / "harness", binary)
             modes, v5 = got.split("--\n")
             # Las tablas Thumb se resolvieron en el análisis: sus casos son etiquetas internas
-            gen = "".join(p.read_text() for p in out.glob("recomp_0*.c"))
+            gen = "".join(p.read_text() for p in out.glob("rc_*.c"))
             for lab in ("jt_h0", "jt_h1", "jt_h2", "jt_h3", "jt_h4", "jt_w0", "jt_w1", "jt_w2"):
                 self.assertIn(f"L_{syms[lab]:08X}:", gen, lab)
             jt = hex_lines(modes)[100:114]

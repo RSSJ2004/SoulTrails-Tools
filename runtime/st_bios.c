@@ -62,6 +62,7 @@ int st_irq_service(StCpu* c) {
     uint32_t handler = st_read32(c, st_dtcm_base + 0x3FFC);
     if (!handler) return 0;
     /* Entrada a la excepción IRQ */
+    uint32_t old_sp = st_user_reg(c, 13);   /* pila del hilo interrumpido (identifica su fibra) */
     uint32_t cpsr = st_get_cpsr(c);
     st_set_mode(c, 0x12);
     c->spsr = cpsr;
@@ -84,13 +85,22 @@ int st_irq_service(StCpu* c) {
     sp = c->r[13];
     for (int i = 0; i < 6; i++) regs[i] = st_read32(c, sp + 4 * (uint32_t)i);
     c->r[13] = sp + 24;
+    st_thread_forget_user_sp();   /* lo que cargó el manejador no es un retorno de excepción */
+    c->r[0] = regs[0]; c->r[1] = regs[1]; c->r[2] = regs[2]; c->r[3] = regs[3]; c->r[12] = regs[4];
     if (regs[5] != ret) {
-        /* El SDK cambia de hilo reescribiendo este marco: hace falta la capa de hilos
-         * (fibras nativas, ver HANDOFF.md). Por ahora se detiene con un mensaje claro. */
-        st_platform.halt(c, "cambio de hilo desde la IRQ (falta la capa de hilos)");
+        /* El SDK cambió de hilo reescribiendo este marco (y los registros de usuario y el SPSR):
+         * se pasa a la fibra de ese hilo (st_thread.c). */
+        uint32_t thumb = (c->spsr >> 5) & 1u;
+        uint32_t pc = regs[5] - 4;
+        pc = thumb ? (pc | 1u) : (pc & ~3u);
+        st_restore_cpsr(c);
+        if (!st_thread_switch(c, pc, st_user_reg(c, 13), old_sp)) {
+            st_platform.halt(c, "cambio de hilo desde la IRQ con la misma pila");
+            return 1;
+        }
+        st_fiber_resumed = 0;   /* reanudada aquí: la CPU ya tiene nuestro estado */
         return 1;
     }
-    c->r[0] = regs[0]; c->r[1] = regs[1]; c->r[2] = regs[2]; c->r[3] = regs[3]; c->r[12] = regs[4];
     st_restore_cpsr(c);
     return 1;
 }

@@ -392,5 +392,10 @@ void st_restore_cpsr(StCpu* c) { st_msr(c, 0, 9, c->spsr); }
 uint32_t st_exception_return(StCpu* c, uint32_t pc) {
     uint32_t t = (c->spsr >> 5) & 1;
     if (st_mode_bank(c->cpsr_ctrl) != ST_BANK_USR) st_restore_cpsr(c);
-    return t ? ((pc & ~1u) | 1u) : (pc & ~3u);
+    uint32_t target = t ? ((pc & ~1u) | 1u) : (pc & ~3u);
+    /* Si antes se cargó otra pila de usuario (LDM ^), es un cambio de hilo (OS_LoadContext) */
+    uint32_t old_sp;
+    if (st_thread_take_prev_sp(&old_sp) && st_thread_switch(c, target, st_user_reg(c, 13), old_sp))
+        return st_thread_resume_pc();   /* reanudada: st_fiber_resumed = 1 */
+    return target;
 }
