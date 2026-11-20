@@ -30,6 +30,10 @@ de resolución interna en ese equipo, y que funcione también en la integrada.
    `ucontext`/hilos con testigo), con `OS_SaveContext`/`OS_LoadContext`/`OS_SwitchThread`
    sustituidos por `st_override` en las direcciones que da objdiff.
 
+Estado (2026-11): hechos IPCSYNC con eco, FIFO del PXI (registro de mensajes), VCOUNT/DISPSTAT,
+cartucho B7/B8, DMA, timers, zona del firmware e IRQ fuera de las esperas. Pendiente: respuestas
+del ARM7 por tag del PXI, copia de seguridad (SPI) y fibras para los hilos.
+
 **Hecho cuando**: `--learn` llega a cientos de cuadros sin fallos y el juego espera input.
 
 ## Fase 2 — Imagen

@@ -82,6 +82,65 @@ int main(void) {
     for (int i = 0; i < 1001; i++) st_read16(&c, i & 1 ? 0x04000180 : 0x04000184);
     CHECK(halted[0]);
 
+    /* Cartucho: B7 lee un bloque de la ROM (por CPU y por DMA del cartucho); B8 da el ID */
+    static uint8_t rom[0x20000];
+    for (unsigned i = 0; i < sizeof rom; i++) rom[i] = (uint8_t)(i * 7 + (i >> 8));
+    st_hw_set_cart(rom, sizeof rom, 0x00003FC2u);
+    st_write16(&c, 0x040001A0, 0xC000);                   /* slot activado + IRQ al terminar */
+    st_irq.if_ = 0;
+    st_write32(&c, 0x040001A8, 0x010000B7u);              /* B7 00 00 01 | 00 ... -> 0x00000100 -> 0x8100 */
+    st_write32(&c, 0x040001AC, 0x00000000u);
+    st_write32(&c, 0x040001A4, 0x80000000u | (1u << 24));  /* 0x200 bytes */
+    CHECK(st_read32(&c, 0x040001A4) & (1u << 23));
+    int ok = 1;
+    for (unsigned i = 0; i < 0x200; i += 4) {
+        uint32_t w = st_read32(&c, 0x04100010), e;
+        memcpy(&e, &rom[0x8100 + i], 4);
+        ok &= w == e;
+    }
+    CHECK(ok);
+    CHECK(!(st_read32(&c, 0x040001A4) & (1u << 31)));
+    CHECK(st_irq.if_ & (1u << 19));
+    st_write32(&c, 0x040001A8, 0x000000B8u);
+    st_write32(&c, 0x040001A4, 0x80000000u | (7u << 24));
+    CHECK(st_read32(&c, 0x04100010) == 0x00003FC2u);
+
+    /* DMA del cartucho: una palabra por petición, con repetición */
+    st_write32(&c, 0x040000D4, 0x04100010u);
+    st_write32(&c, 0x040000D8, 0x02100000u);
+    st_write32(&c, 0x040000DC, 0x80000000u | (5u << 27) | (1u << 26) | (1u << 25) | 2u << 23 | 1u);
+    st_write32(&c, 0x040001A8, 0x900000B7u);              /* B7 00 00 90 00 -> 0x9000 */
+    st_write32(&c, 0x040001A4, 0x80000000u | (1u << 24));
+    CHECK(memcmp(&st_main_ram[0x100000], &rom[0x9000], 0x200) == 0);
+    CHECK(!(st_read32(&c, 0x040001A4) & (1u << 31)));
+
+    /* DMA inmediata de 16 bits */
+    for (int i = 0; i < 8; i++) st_write16(&c, 0x02200000 + 2 * i, (uint16_t)(0x1111 * i));
+    st_write32(&c, 0x040000B0, 0x02200000u);
+    st_write32(&c, 0x040000B4, 0x02200100u);
+    st_write32(&c, 0x040000B8, 0x80000000u | 8u);
+    CHECK(st_read16(&c, 0x0220010E) == 0x7777);
+    CHECK(!(st_read32(&c, 0x040000B8) & 0x80000000u));
+
+    /* Timer 0: recarga FF00, sin prescaler, IRQ al desbordar; timer 1 en cascada */
+    st_irq.if_ = 0;
+    st_write32(&c, 0x04000100, 0x00C0FF00u);
+    st_write32(&c, 0x04000104, 0x00840000u);
+    st_clock_advance(0x100);
+    CHECK(st_irq.if_ & 0x8u);
+    CHECK(st_read16(&c, 0x04000104) == 1);
+    st_clock_advance(0x100 * 3);
+    CHECK(st_read16(&c, 0x04000104) == 4);
+
+    /* IRQ pendiente: IME y IE */
+    st_write32(&c, 0x04000208, 0);
+    st_write32(&c, 0x04000210, 0x8u);
+    CHECK(!st_irq_pending);
+    st_write32(&c, 0x04000208, 1);
+    CHECK(st_irq_pending);
+    st_write32(&c, 0x04000214, 0x8u);
+    CHECK(!st_irq_pending);
+
     printf(fails ? "hw: %d fallos\n" : "hw: OK\n", fails);
     return fails != 0;
 }

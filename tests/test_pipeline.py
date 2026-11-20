@@ -114,8 +114,10 @@ if __name__ == "__main__":
 class Watchdog(unittest.TestCase):
     def test_learn_reports_spin(self):
         """Un juego que gira sin E/S ni llamadas: el vigilante del port dice dónde (código 6)."""
-        arm9 = struct.pack("<4I", 0xEB000000, 0xEAFFFFFE,     # bl spin ; b .
-                           0xE3A00001, 0xEAFFFFFE)             # spin: mov r0,#1 ; b .
+        arm9 = struct.pack("<6I", 0xEB000000, 0xEAFFFFFE,     # bl spin ; b .
+                           0xE59F1004,                         # spin: ldr r1, =0x027FFF8C
+                           0xE5910000, 0xEAFFFFFD,             # 1: ldr r0, [r1] ; b 1b
+                           0x027FFF8C)
         rom = B.rom({}, arm9=arm9 + bytes(64))
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
@@ -126,3 +128,7 @@ class Watchdog(unittest.TestCase):
             out = sh(*stk, "recomp", "--learn", "--timeout", "15", env=env)
             self.assertIn("vigilante", out, out)
             self.assertRegex(out, r"02000008 arm9:02000008", out)    # la función que gira
+            self.assertRegex(out, r"027FFF8C 4 bytes +lecturas", out)  # lo que lee el bucle
+            dis = sh(*stk, "disasm", "02000008", "--c", env=env)
+            self.assertIn("arm9:02000008 ARM", dis)
+            self.assertIn("02000010", dis)

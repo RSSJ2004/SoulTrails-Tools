@@ -70,8 +70,56 @@ int st_rom_overlay(const StRom* rom, int index, StOverlayInfo* o) {
     return 0;
 }
 
+int st_boot_language = 5;   /* idioma de la consola: 0 ja, 1 en, 2 fr, 3 de, 4 it, 5 es */
+
+static void put16(uint32_t a, uint16_t v) { st_load(a, &v, 2); }
+static void put32(uint32_t a, uint32_t v) { st_load(a, &v, 4); }
+
+uint32_t st_boot_chip_id(const StRom* rom) {
+    /* 1er byte: fabricante; 2º: tamaño en MB - 1 (capacidad de la cabecera: 128 KB << n) */
+    uint32_t cap = rom->size >= 0x15 ? rom->data[0x14] : 9;
+    uint32_t mb = cap >= 3 && cap < 22 ? (128u << cap) >> 10 : 1;
+    return 0xC2u | ((mb ? mb - 1 : 0) & 0xFFu) << 8;
+}
+
+/* Lo que dejan el BIOS y el firmware en la RAM principal al arrancar un cartucho (GBATEK,
+ * "BIOS RAM Usage" y "Firmware User Settings"): IDs del chip, CRC, indicador de arranque y
+ * los ajustes de usuario (idioma, calibración táctil...). */
+static void boot_system_area(const StRom* rom) {
+    uint32_t chip = st_boot_chip_id(rom);
+    uint16_t hcrc = rom->size >= 0x160 ? (uint16_t)(rom->data[0x15E] | rom->data[0x15F] << 8) : 0;
+    uint16_t scrc = rom->size >= 0x6E ? (uint16_t)(rom->data[0x6C] | rom->data[0x6D] << 8) : 0;
+    for (uint32_t base = 0x027FF800u; base <= 0x027FFC00u; base += 0x400u) {
+        put32(base + 0x00, chip);
+        put32(base + 0x04, chip);
+        put16(base + 0x08, hcrc);
+        put16(base + 0x0A, scrc);
+        put16(base + 0x0C, 0);        /* CRC correcto */
+        put16(base + 0x0E, 0);        /* área segura correcta */
+        put16(base + 0x10, 0x5835u);  /* CRC del BIOS del ARM7 (en 27FFC10h); en 27FF810h, tarea de arranque */
+    }
+    put16(0x027FF810u, 0xFFFFu);
+    put16(0x027FF850u, 0x5835u);
+    put16(0x027FFC40u, 1);            /* indicador de arranque: normal */
+    /* Ajustes de usuario (0x70 bytes en 27FFC80h) */
+    uint32_t u = 0x027FFC80u;
+    static const uint16_t nick[] = {'L', 'i', 'n', 'k'};
+    put16(u + 0x00, 5);
+    for (unsigned i = 0; i < 4; i++) put16(u + 0x06 + 2 * i, nick[i]);
+    put16(u + 0x1A, 4);
+    /* Calibración táctil típica: ADC <-> píxel en dos puntos */
+    put16(u + 0x58, 0x02DF); put16(u + 0x5A, 0x032C);
+    uint8_t p1[2] = {0x20, 0x20}, p2[2] = {0xE0, 0xA0};
+    st_load(u + 0x5C, p1, 2);
+    put16(u + 0x5E, 0x0D3B); put16(u + 0x60, 0x0CE7);
+    st_load(u + 0x62, p2, 2);
+    put16(u + 0x64, (uint16_t)((st_boot_language & 7) | (3u << 4)));   /* idioma, brillo máximo */
+}
+
 uint32_t st_boot_prepare(StCpu* c, const StRom* rom) {
     st_init(c);
+    st_hw_set_cart(rom->data, rom->size, st_boot_chip_id(rom));
+    boot_system_area(rom);
     /* El cargador del cartucho copia la cabecera y el ARM9 (sin descomprimir) */
     st_load(ST_HEADER_RAM, rom->data, 0x170);
     st_load(rom->arm9_ram, rom->data + rom->arm9_off, rom->arm9_size);

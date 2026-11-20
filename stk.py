@@ -464,7 +464,8 @@ def cmd_recomp(a) -> None:
             except subprocess.TimeoutExpired as e:
                 dec = (lambda b: b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or ""))
                 rc, log = -1, dec(e.stdout) + dec(e.stderr)
-            tail = "\n".join(log.strip().splitlines()[-12:])
+            (STATE_DIR / "last_run.txt").write_text(log, encoding="utf-8")
+            tail = "\n".join(log.strip().splitlines()[-(90 if rc == 6 else 12):])
             if rc == 0:
                 print(f"[learn {it}] {PORT_EXIT[0]}")
                 break
@@ -473,7 +474,7 @@ def cmd_recomp(a) -> None:
                 why = PORT_EXIT.get(rc, "tiempo agotado" if rc == -1 else f"código {rc}")
                 if rc == 3:
                     why += " ya conocida (p. ej. overlay no cargado: falta la capa de plataforma)"
-                print(f"[learn {it}] se para: {why}\n{tail}")
+                print(f"[learn {it}] se para: {why}\n{tail}\n(salida completa en {STATE_DIR / 'last_run.txt'})")
                 break
             learned += len(new)
             print(f"[learn {it}] aprendido: {', '.join(new)}")
@@ -769,6 +770,42 @@ def wait_for_change(src: Path, interval: float) -> None:
             return
 
 
+def cmd_disasm(a) -> None:
+    """Desensambla una función de TU ROM con el decodificador del recompilador (para
+    diagnosticar dónde gira o falla el port). Muestra también la traducción a C."""
+    from sttools.nds import Rom
+    from sttools.recomp import driver
+    from sttools.recomp.program import Program
+    cfg = config()
+    rom = Rom.load(cfg["rom"])
+    prog = Program(driver.modules_from_rom(rom))
+    for spec in a.addr:
+        addr = int(spec, 16)
+        thumb = bool(addr & 1) if a.mode is None else a.mode == "thumb"
+        addr &= ~1
+        mods = [m for m in prog.modules if m.name == a.module] if a.module else (
+            [prog.module_for(addr)] if prog.module_for(addr) else prog.overlays_at(addr))
+        if not mods:
+            print(f"{addr:08X}: no está en ningún módulo")
+            continue
+        for m in mods[:1] if not a.module and prog.module_for(addr) else mods:
+            f = prog.trace_free(m, addr, thumb)
+            print(f"== {m.name}:{addr:08X} {'Thumb' if thumb else 'ARM'}, {len(f.insns)} instrucciones")
+            for ia in sorted(f.insns):
+                ins = f.insns[ia]
+                raw = f"{ins.raw:0{4 if thumb else 8}X}"
+                code = " ".join(ins.code.split()) if a.c else ""
+                asm = ins.asm or "?"
+                lit = re.search(r"=(0x[0-9a-fA-F]+)$", asm)
+                if lit and asm.startswith("ldr"):   # valor del literal en la ROM
+                    v = prog.read(m, int(lit.group(1), 16), 4)
+                    asm += f"  ; [{v:08X}]" if v is not None else ""
+                print(f"  {ia:08X}  {raw:8}  {asm:44} {code[:110]}")
+            words = [prog.read(m, x, 4) for x in range(max(f.insns) + 4, max(f.insns) + 4 + 4 * a.pool, 4)]
+            if a.pool:
+                print("  literales tras la función: " + " ".join(f"{w:08X}" for w in words if w is not None))
+
+
 def cmd_status(a) -> None:
     cfg = load_json(CONFIG_FILE, {})
     st = state()
@@ -850,6 +887,14 @@ def main() -> None:
     s.add_argument("--max-frames", type=int, default=600, help="cuadros que se deja correr el port en cada vuelta")
     s.add_argument("--timeout", type=int, default=120, help="segundos máximos por ejecución del port")
     s.set_defaults(fn=cmd_recomp)
+
+    s = sub.add_parser("disasm", help="desensambla funciones de tu ROM (diagnóstico)")
+    s.add_argument("addr", nargs="+", help="dirección en hex (bit 0 = Thumb)")
+    s.add_argument("--mode", choices=["arm", "thumb"], help="fuerza ARM o Thumb")
+    s.add_argument("--module", help="módulo (arm9, itcm, ov031...) si la dirección es de un overlay")
+    s.add_argument("--c", action="store_true", help="muestra también la traducción a C")
+    s.add_argument("--pool", type=int, default=8, help="palabras de literales a mostrar tras la función")
+    s.set_defaults(fn=cmd_disasm)
 
     s = sub.add_parser("ghidra", help="import / export / open")
     s.add_argument("action", choices=["import", "export", "open"])

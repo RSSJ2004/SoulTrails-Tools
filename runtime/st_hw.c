@@ -7,6 +7,7 @@
  * - FIFO del PXI (0x04000184/0x04000188/0x04100000): lo que envía el ARM9 se registra y se
  *   pasa a st_platform.pxi_send (la HLE del ARM7, por hacer); las respuestas se encolan con
  *   st_pxi_reply().
+ * - VCOUNT/DISPSTAT simulados; cartucho, DMA y timers en st_dev.c.
  * - Detector de esperas: si el juego lee la misma dirección de E/S muchísimas veces seguidas
  *   sin que pase un cuadro, se detiene diciendo qué registro espera (en vez de agotar el tiempo).
  *
@@ -28,6 +29,7 @@ static unsigned fifo_cnt = 0x0101u;       /* envío vacío | recepción vacía *
 static unsigned long pxi_logged;
 
 static uint32_t poll_addr, poll_count;
+static int vblank_done;                   /* DMA/IRQ del VBlank ya hechos en este cuadro */
 static uint32_t vcount;                   /* línea simulada: avanza con cada lectura de VCOUNT/DISPSTAT */
 #define LINES 263u
 #define VBLANK_LINE 192u
@@ -68,18 +70,34 @@ void st_hw_reset(void) {
     poll_addr = poll_count = 0;
     pxi_logged = 0;
     vcount = 0;
+    vblank_done = 0;
+    st_dev_reset();
 }
 
-void st_hw_frame(void) { poll_count = 0; vcount = 0; }
+/* Un cuadro completo (la plataforma esperó al VBlank): el tiempo salta al principio del siguiente */
+void st_hw_frame_c(StCpu* c) {
+    if (!vblank_done && c) st_dev_vblank(c);
+    if (vcount < LINES) st_clock_advance((LINES - vcount) * 2130u);
+    poll_count = 0;
+    vcount = 0;
+    vblank_done = 0;
+}
+static StCpu* last_cpu;
+void st_hw_frame(void) { st_hw_frame_c(last_cpu); }
 
 /* Sin temporización real, cada lectura de VCOUNT/DISPSTAT avanza una línea. Al entrar en el
  * VBlank se levanta su IRQ (si DISPSTAT la pide) y al dar la vuelta cuenta como un cuadro
  * (st_platform.idle), así los bucles "espera a la línea N" o "espera al VBlank" terminan. */
 static void advance_line(StCpu* c) {
     vcount++;
+    st_clock_advance(2130u);
     uint16_t stat;
     memcpy(&stat, &io_regs[4], 2);
-    if (vcount == VBLANK_LINE && (stat & 0x8u)) st_raise_irq(ST_IRQ_VBLANK);
+    if (vcount == VBLANK_LINE) {
+        if (stat & 0x8u) st_raise_irq(ST_IRQ_VBLANK);
+        st_dev_vblank(c);
+        vblank_done = 1;
+    }
     if (vcount == ((stat >> 8) | ((stat & 0x80u) << 1)) && (stat & 0x20u)) st_raise_irq(ST_IRQ_VCOUNT);
     if (vcount >= LINES) {
         vcount = 0;
@@ -111,6 +129,8 @@ static void watch_poll(StCpu* c, uint32_t addr) {
 /* Devuelve 1 si la dirección la gestiona este módulo. */
 int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
     uint32_t a = addr & ~3u;
+    last_cpu = c;
+    if (a >= 0x04000100u && a < 0x04000110u) return st_dev_read(c, addr, size, out);   /* timers: avanzan el tiempo */
     if (a == 0x04000004u) {   /* DISPSTAT + VCOUNT: avanzan el tiempo, no cuentan como espera */
         advance_line(c);
         uint32_t stat = io_get(0x04000004u, 2) & 0xFFB8u;
@@ -131,6 +151,7 @@ int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
         *out = (fifo_cnt | (io_get(0x04000184u, 4) & 0x8404u)) >> ((addr & 3) * 8);
         return 1;
     }
+    if (st_dev_read(c, addr, size, out)) return 1;
     if (a == 0x04100000u) {
         uint32_t v = 0;
         if (fifo_rx_n) {
@@ -161,6 +182,8 @@ int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out) {
 
 int st_hw_write(StCpu* c, uint32_t addr, uint32_t v, int size) {
     poll_count = 0;
+    last_cpu = c;
+    if (st_dev_write(c, addr, v, size)) return 1;
     uint32_t a = addr & ~3u;
     if (a == 0x04000180u) {
         uint32_t sh = (addr & 3) * 8, full = io_get(0x04000180u, 4);

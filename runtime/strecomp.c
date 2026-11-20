@@ -70,7 +70,7 @@ static int default_idle(StCpu* c) {
 }
 
 StPlatform st_platform = {default_io_read, default_io_write, default_swi, default_unimpl, default_miss, default_halt,
-                          default_coproc, default_bkpt, default_idle};
+                          default_coproc, default_bkpt, default_idle, NULL, NULL};
 
 /* ---------------------------------------------------------------- memoria */
 uint8_t* st_ptr(uint32_t addr, uint32_t size) {
@@ -90,29 +90,59 @@ uint8_t* st_ptr(uint32_t addr, uint32_t size) {
     }
 }
 
+/* Sonda de memoria: mientras st_probe_on, se anotan las direcciones que el juego lee y escribe
+ * (el vigilante la activa un momento para saber qué espera un bucle). Coste fuera de la sonda:
+ * una comprobación por acceso. */
+volatile int st_probe_on;
+StProbe st_probe[ST_PROBE_LEN];
+volatile unsigned st_probe_n;
+
+static void probe(uint32_t a, int size, int write) {
+    unsigned n = st_probe_n;
+    for (unsigned i = 0; i < n; i++)
+        if (st_probe[i].addr == a && st_probe[i].size == size) {
+            if (write) st_probe[i].writes++; else st_probe[i].reads++;
+            return;
+        }
+    if (n < ST_PROBE_LEN) {
+        st_probe[n].addr = a;
+        st_probe[n].size = size;
+        st_probe[n].reads = !write;
+        st_probe[n].writes = write;
+        st_probe_n = n + 1;
+    }
+}
+#define PROBE(a, s, w) do { if (st_probe_on) probe((a), (s), (w)); } while (0)
+
 uint32_t st_read8(StCpu* c, uint32_t a) {
+    PROBE(a, 1, 0);
     uint8_t* p = st_ptr(a, 1);
     return p ? *p : st_io_read(c, a, 1) & 0xFF;
 }
 uint32_t st_read16(StCpu* c, uint32_t a) {
+    PROBE(a, 2, 0);
     uint8_t* p = st_ptr(a, 2);
     if (p) { uint16_t v; memcpy(&v, p, 2); return v; }
     return st_io_read(c, a, 2) & 0xFFFF;
 }
 uint32_t st_read32(StCpu* c, uint32_t a) {
+    PROBE(a, 4, 0);
     uint8_t* p = st_ptr(a, 4);
     if (p) { uint32_t v; memcpy(&v, p, 4); return v; }
     return st_io_read(c, a, 4);
 }
 void st_write8(StCpu* c, uint32_t a, uint8_t v) {
+    PROBE(a, 1, 1);
     uint8_t* p = st_ptr(a, 1);
     if (p) *p = v; else st_io_write(c, a, v, 1);
 }
 void st_write16(StCpu* c, uint32_t a, uint16_t v) {
+    PROBE(a, 2, 1);
     uint8_t* p = st_ptr(a, 2);
     if (p) memcpy(p, &v, 2); else st_io_write(c, a, v, 2);
 }
 void st_write32(StCpu* c, uint32_t a, uint32_t v) {
+    PROBE(a, 4, 1);
     uint8_t* p = st_ptr(a, 4);
     if (p) memcpy(p, &v, 4); else st_io_write(c, a, v, 4);
 }

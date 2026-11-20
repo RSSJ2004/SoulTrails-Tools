@@ -27,12 +27,11 @@ static unsigned long frames, max_frames;
 
 /* Sin GPU todavía: cada espera del juego cuenta como un cuadro con su VBlank */
 static int on_idle(StCpu* c) {
-    (void)c;
     if (max_frames && ++frames >= max_frames) {
         printf("[port] %lu cuadros sin fallos\n", frames);
         exit(0);
     }
-    st_hw_frame();
+    st_hw_frame_c(c);
     st_raise_irq(ST_IRQ_VBLANK);
     return 1;
 }
@@ -56,7 +55,14 @@ static void on_halt(StCpu* c, const char* why) {
  * solo para diagnóstico. */
 static unsigned watchdog_secs;
 
+static void sleep_ms(unsigned ms);
+
 static void watchdog_dump(void) {
+    /* Sonda: qué lee y escribe el bucle durante un momento */
+    st_probe_n = 0;
+    st_probe_on = 1;
+    sleep_ms(300);
+    st_probe_on = 0;
     fprintf(stderr, "[port] vigilante: %u s sin terminar, %lu cuadros\n", watchdog_secs, frames);
     fprintf(stderr, "[port] registros:");
     for (int i = 0; i < 16; i++) fprintf(stderr, " r%d=%08X", i, cpu.r[i]);
@@ -73,9 +79,25 @@ static void watchdog_dump(void) {
         fprintf(stderr, "  %08X %s\n", a, st_symbol_for(a));
     }
     if (rep) fprintf(stderr, "    (x%u)\n", rep + 1);
+    unsigned np = st_probe_n;
+    fprintf(stderr, "[port] accesos del bucle en 300 ms (%u direcciones):\n", np);
+    for (unsigned i = 0; i < np && i < 48; i++) {
+        const StProbe* q = &st_probe[i];
+        uint8_t* m = st_ptr(q->addr, (uint32_t)q->size);
+        uint32_t v = 0;
+        if (m) memcpy(&v, m, (size_t)q->size);
+        fprintf(stderr, "  %08X %d bytes  lecturas %-9u escrituras %-9u valor %s%0*X\n", q->addr, q->size, q->reads,
+                q->writes, m ? "" : "(E/S) ", q->size * 2, v);
+    }
     fflush(stderr);
     _Exit(6);
 }
+
+#ifdef _WIN32
+static void sleep_ms(unsigned ms) { Sleep(ms); }
+#else
+static void sleep_ms(unsigned ms) { usleep(ms * 1000u); }
+#endif
 
 #ifdef _WIN32
 static DWORD WINAPI watchdog_thread(LPVOID arg) {
@@ -106,8 +128,13 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom_path = argv[++i];
         else if (!strcmp(argv[i], "--misses") && i + 1 < argc) misses = argv[++i];
         else if (!strcmp(argv[i], "--max-frames") && i + 1 < argc) max_frames = strtoul(argv[++i], NULL, 10);
+        else if (!strcmp(argv[i], "--lang") && i + 1 < argc) {
+            static const char* langs[] = {"ja", "en", "fr", "de", "it", "es"};
+            const char* l = argv[++i];
+            for (int k = 0; k < 6; k++) if (!strcmp(l, langs[k])) st_boot_language = k;
+        }
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) watchdog_secs = (unsigned)strtoul(argv[++i], NULL, 10);
-        else { fprintf(stderr, "uso: %s --rom juego.nds [--misses archivo] [--max-frames N] [--watchdog S]\n", argv[0]); return 2; }
+        else { fprintf(stderr, "uso: %s --rom juego.nds [--misses archivo] [--max-frames N] [--watchdog S] [--lang es|en|fr|de|it|ja]\n", argv[0]); return 2; }
     }
     if (!rom_path) { fprintf(stderr, "falta --rom\n"); return 2; }
     StRom rom;

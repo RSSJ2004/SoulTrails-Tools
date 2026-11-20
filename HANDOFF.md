@@ -127,6 +127,25 @@ sistema al final de la RAM principal) → HLE del ARM7 por tag.
 y las últimas 64 funciones en las que se entró (`ST_TRACE` al inicio de cada función generada;
 `ST_NO_TRACE` lo quita). Prueba: `tests/test_pipeline.py::Watchdog`.
 
+**Vigilante con la ROM real**: gira en `arm9:020263BC` (ARM; llamada desde `020261F0` ←
+`0202641C` ← `020280EC`, antes un bucle de funciones Thumb 0202782x-0202793x). Para saber qué
+espera: **sonda de memoria** (el vigilante anota 300 ms de lecturas/escrituras con valores) y
+`stk disasm ADDR [--c]` (desensambla con el decodificador del recompilador; `ldr rX, =lit ; [valor]`).
+`--learn` guarda la salida entera en `.stk/last_run.txt`.
+
+**Fase 1 de `docs/PLAN.md` (sin probar aún con la ROM)**:
+- `runtime/st_dev.c`: cartucho en modo de datos (B7 bloque con redirección <0x8000, B8 ID),
+  DMA (inmediata, VBlank, cartucho una palabra por petición, FIFO 3D de golpe), timers con
+  recarga/cascada/IRQ sobre un reloj virtual de 33,51 MHz (avanza 2130 ciclos por línea, el
+  resto del cuadro en cada espera y 16 ciclos por lectura de timer).
+- `st_rom.c`: zona del BIOS/firmware (IDs del chip en 27FF800h/27FFC00h, CRC, indicador de
+  arranque 27FFC40h, ajustes de usuario en 27FFC80h con idioma `--lang`, por defecto es, y
+  calibración táctil).
+- IRQ fuera de las esperas: `st_irq_pending` y `st_irq_poll` en `ST_TRACE` (entrada de cada
+  función generada) si el bit I del CPSR está a 0. Puede destapar el cambio de hilo desde la IRQ
+  (hilos del SDK → fibras, fase 1.5).
+- Pruebas en `tests/hw/hw_test.c`.
+
 **Decomp**: estado y pasos en `docs/DECOMP.md` (en Windows su regla de regenerar `build.ninja`
 usa `&&` sin `cmd` y falla; el usuario lo dejó aparcado).
 

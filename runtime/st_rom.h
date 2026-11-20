@@ -35,6 +35,8 @@ int st_rom_overlay(const StRom* rom, int index, StOverlayInfo* out);            
 
 /* Carga cabecera + ARM9, deja la CPU como el BIOS (SVC, IRQ/FIQ off, pilas) y devuelve la
  * dirección de entrada. st_boot_run() además la ejecuta. */
+extern int st_boot_language;   /* idioma de la consola (0 ja, 1 en, 2 fr, 3 de, 4 it, 5 es) */
+uint32_t st_boot_chip_id(const StRom* rom);
 uint32_t st_boot_prepare(StCpu* c, const StRom* rom);
 void st_boot_run(StCpu* c, const StRom* rom);
 

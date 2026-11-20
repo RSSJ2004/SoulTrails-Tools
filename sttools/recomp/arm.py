@@ -1,6 +1,8 @@
 """Traductor de instrucciones ARM (ARMv5TE, ARM946E-S) a C."""
 from __future__ import annotations
 
+import re
+
 from .insn import BRANCH, CALL, INDIRECT, NEXT, RET, TABLE, UNDEF, Ins, h, sx
 
 DP_OPS = ["and", "eor", "sub", "rsb", "add", "adc", "sbc", "rsc", "tst", "teq", "cmp", "cmn", "orr", "mov", "bic", "mvn"]
@@ -245,8 +247,26 @@ def single_transfer(ins: Ins, w: int, pc: int) -> None:
         lines.append(f"{'st_write8(c, addr, (uint8_t)' if b else 'st_write32(c, addr & ~3u, '}{val});")
         if wb_line:
             lines.append(wb_line)
-    ins.asm = f"{'ldr' if load else 'str'}{'b' if b else ''} r{rd}, [r{rn}]"
+    name = f"{'ldr' if load else 'str'}{'b' if b else ''}"
+    ins.asm = _mem_asm(name, rd, rn, off, sign, p, wb, pc)
     ins.code = "{ " + " ".join(lines) + " }"
+
+
+def _mem_asm(name: str, rd: int, rn: int, off: str, sign: str, p: bool, wb: bool, pc: int) -> str:
+    """Texto de ensamblador de una carga/almacenamiento; relativo al PC muestra '=dirección'."""
+    o = off.replace("c->r[", "r").replace("]", "").replace("0x", "#0x")
+    zero = off in ("0x00000000u", "0x0u") or re.fullmatch(r"0x0+u", off)
+    if rn == 15 and p and re.fullmatch(r"0x[0-9A-Fa-f]+u", off):
+        lit = (pc + int(off[:-1], 16)) if sign == "+" else (pc - int(off[:-1], 16))
+        return f"{name} r{rd}, ={lit & 0xFFFFFFFF:#x}"
+    o = f"#{int(o[3:].rstrip('u'), 16):#x}" if o.startswith("#0x") else o
+    if sign == "-":
+        o, sg = ("#-" + o[1:], "") if o.startswith("#") else (o, "-")
+    else:
+        sg = ""
+    if not p:
+        return f"{name} r{rd}, [r{rn}], {sg}{o}"
+    return f"{name} r{rd}, [r{rn}]" if zero else f"{name} r{rd}, [r{rn}, {sg}{o}]{'!' if wb else ''}"
 
 
 def halfword_transfer(ins: Ins, w: int, pc: int) -> None:
@@ -296,7 +316,7 @@ def halfword_transfer(ins: Ins, w: int, pc: int) -> None:
             name = "strd"
         if wb_line:
             lines.append(wb_line)
-    ins.asm = f"{name} r{rd}, [r{rn}]"
+    ins.asm = _mem_asm(name, rd, rn, off, sign, p, wb, pc)
     ins.code = "{ " + " ".join(lines) + " }"
 
 

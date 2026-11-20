@@ -97,6 +97,18 @@ void st_hw_frame(void);                     /* la plataforma avanzó un cuadro *
 void st_pxi_reply(uint32_t value);          /* respuesta del ARM7 a la FIFO del ARM9 */
 int st_hw_read(StCpu* c, uint32_t addr, int size, uint32_t* out);
 int st_hw_write(StCpu* c, uint32_t addr, uint32_t v, int size);
+/* Dispositivos (st_dev.c): cartucho, DMA, timers y reloj virtual de 33,51 MHz */
+void st_dev_reset(void);
+void st_dev_vblank(StCpu* c);
+int st_dev_read(StCpu* c, uint32_t addr, int size, uint32_t* out);
+int st_dev_write(StCpu* c, uint32_t addr, uint32_t v, int size);
+void st_hw_set_cart(const uint8_t* data, size_t size, uint32_t chip_id);
+void st_clock_advance(uint32_t cycles);
+uint64_t st_clock(void);
+void st_hw_frame_c(StCpu* c);               /* como st_hw_frame, con la CPU para los DMA del VBlank */
+/* IRQ fuera de las esperas: se comprueba al entrar en cada función generada (ST_TRACE) */
+extern volatile int st_irq_pending;
+void st_irq_poll(StCpu* c);
 extern int st_hw_ipcsync_echo;              /* 1: el ARM7 HLE repite lo que publica el ARM9 */
 extern unsigned long st_hw_poll_limit;      /* lecturas seguidas de la misma E/S = espera */
 int st_irq_service(StCpu* c);                       /* 1 si ejecutó el manejador del juego */
@@ -122,6 +134,11 @@ uint32_t st_read32(StCpu* c, uint32_t addr);
 void st_write8(StCpu* c, uint32_t addr, uint8_t v);
 void st_write16(StCpu* c, uint32_t addr, uint16_t v);
 void st_write32(StCpu* c, uint32_t addr, uint32_t v);
+typedef struct StProbe { uint32_t addr; int size; unsigned reads, writes; } StProbe;
+#define ST_PROBE_LEN 256u
+extern volatile int st_probe_on;
+extern StProbe st_probe[ST_PROBE_LEN];
+extern volatile unsigned st_probe_n;
 int st_load(uint32_t addr, const void* data, size_t size);  /* copia datos a memoria emulada */
 
 /* ---- Ejecución ---- */
@@ -220,15 +237,16 @@ static inline uint32_t st_ldr32(StCpu* c, uint32_t addr) {
 }
 
 /* ---- Macros usadas por el código generado ---- */
-/* Traza de las últimas funciones en las que se entró (para diagnosticar cuelgues). Cuesta una
- * escritura por llamada; se quita compilando con ST_NO_TRACE. */
+/* Al entrar en cada función generada: traza de las últimas funciones (para diagnosticar
+ * cuelgues; se quita con ST_NO_TRACE) y entrega de IRQ pendientes fuera de las esperas. */
 #define ST_TRACE_LEN 64u
 extern volatile uint32_t st_trace_ring[ST_TRACE_LEN];
 extern volatile uint32_t st_trace_pos;
 #ifdef ST_NO_TRACE
-#define ST_TRACE(a) ((void)0)
+#define ST_TRACE(a) do { if (st_irq_pending) st_irq_poll(c); } while (0)
 #else
-#define ST_TRACE(a) (st_trace_ring[st_trace_pos++ & (ST_TRACE_LEN - 1)] = (a))
+#define ST_TRACE(a) do { st_trace_ring[st_trace_pos++ & (ST_TRACE_LEN - 1)] = (a); \
+                         if (st_irq_pending) st_irq_poll(c); } while (0)
 #endif
 #define ST_RETURN(v) do { c->next_pc = (v); return; } while (0)
 #define ST_INDIRECT(v) do { jt = (v); goto st_dispatch; } while (0)
