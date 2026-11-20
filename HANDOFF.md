@@ -29,7 +29,7 @@ Peticiones explícitas del usuario:
   debería mantener ese criterio o hablarlo con el usuario.
 
 ## Estado actual
-Todos los tests pasan (`python -m unittest discover -s tests` → 18 OK; además
+Todos los tests pasan (`python -m unittest discover -s tests` → 19 OK; además
 `frontend/build/layout_test` e `input_test`). **Nada se ha probado aún con la ROM real**: el usuario
 va a hacerlo.
 
@@ -54,7 +54,7 @@ frontend/              SDL2 + Dear ImGui 1.91.5 (FetchContent)
   input.*              InputMapper sin SDL: acciones, 3 asignaciones por acción, palanca→toque, gestos (tajo, giro, voltereta, tocar Link, tocar cursor), cursor con palanca derecha, micrófono, controls.ini
   main.cpp             app: pestañas Pantallas/Controles, "pulsa para asignar", mando con hotplug, lápiz virtual; ScreenSource = interfaz que implementará el juego (hoy TestPattern)
 ghidra_scripts/ExportFunctions.java  exporta {name, addr, size, block, thumb, c}
-tests/                 test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
+tests/                 cpu/ (modes.S, v5rules.S, harness.c, modes_expected.txt) + test_cpu_modes, test_discover (descubrimiento con ARM sintético a mano, tiempo), builders.py (archivos DS sintéticos y compresores), test_assets, test_recomp (compila C con arm-none-eabi-gcc, recompila y compara con nativo en -O0/-O2/-Os, con bucle de aprendizaje de fallos), test_pipeline (ROM sintética con código + overlay BLZ por todo stk)
 ```
 
 ### Comandos de stk
@@ -88,9 +88,24 @@ tests/                 test_discover (descubrimiento con ARM sintético a mano, 
    táctil, RTC, micrófono, Wi-Fi no).
 4. Interrupciones/VBlank: `SWI WaitByLoop/IntrWait/VBlankIntrWait` deben ceder al frontend y
    ejecutar los handlers IRQ del juego (direcciones guardadas en DTCM).
-5. Huecos conocidos: LDM/STM con bit S (registros de usuario), cambios de modo y bancos de
-   registros (IRQ/SVC), STM con base en la lista, coprocesador distinto de CP15, `bkpt`.
-   Instrucción no soportada hoy aborta vía `st_unimpl`.
+5. ~~Huecos conocidos~~ **hecho** (`tests/test_cpu_modes.py`):
+   - Bancos de registros por modo en `StCpu` (`bank_r13/r14/spsr`, `usr_r8_12/fiq_r8_12`);
+     `st_set_mode` los cambia, y `st_msr` lo llama al cambiar el modo. En modo usuario MSR solo
+     toca flags.
+   - LDM/STM con bit S: sin PC usan los registros de usuario (`st_user_reg`); con PC es retorno
+     de excepción (`st_exception_return`: CPSR=SPSR y vuelve a Thumb si T=1). Igual para
+     `MOVS/SUBS pc, ...`.
+   - Base en la lista (ARMv5, GBATEK): STM guarda siempre la base antigua; LDM escribe la base
+     si es el único registro o no es el último, si no gana el valor cargado.
+   - MRC/MCR a un coprocesador ≠ CP15 → `st_platform.coproc` (por defecto avisa una vez y
+     devuelve 0); `bkpt` ARM y Thumb → `st_platform.bkpt` (por defecto `halt`). CDP/LDC/STC
+     siguen como indefinidas (el ARM946E-S no tiene coprocesadores que las acepten).
+   - **Referencia: QEMU `-cpu arm946`** (la misma CPU) ejecuta `tests/cpu/modes.S` con
+     semihosting; su salida está en `tests/cpu/modes_expected.txt` y, si `qemu-system-arm` está
+     instalado, el test la vuelve a generar y compara. Lo que QEMU no modela como el hardware
+     (`tests/cpu/v5rules.S`) se compara con valores de GBATEK. Esto sirve también para futuras
+     pruebas diferenciales de instrucciones (p. ej. flags con entradas aleatorias).
+   - Nota: el bit T no se guarda en `cpsr_ctrl`; lo determina el código en ejecución.
 6. Rendimiento:
    - ~~Descubrimiento en Python (escaneo de punteros)~~ **hecho**: trazados memorizados por
      (módulo, dirección, modo), candidatos descartados en cuanto aparece una instrucción
@@ -131,7 +146,8 @@ guardado, 60 FPS, panorámico, filtros, remapeo completo y mods de texturas.
 
 ## Cómo trabajar en este repo
 - Python 3.10+ solo stdlib. C11 para el runtime, C++17 para el frontend.
-- Tests: `python -m unittest discover -s tests` (requiere `arm-none-eabi-gcc`, `cc`, `cmake`)
+- Tests: `python -m unittest discover -s tests` (requiere `arm-none-eabi-gcc`, `cc`, `cmake`;
+  opcional `qemu-system-arm` para regenerar la referencia de `test_cpu_modes`)
   y `cd frontend && cmake -S . -B build -G Ninja && cmake --build build && ./build/layout_test && ./build/input_test`.
 - Nada derivado de la ROM se sube (`.gitignore` cubre `assets/`, `build/`, `.stk/`, `*.nds`...).
 - Las pruebas usan solo datos sintéticos generados por `tests/builders.py`.

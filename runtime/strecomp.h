@@ -16,13 +16,19 @@
 extern "C" {
 #endif
 
+/* Índices de banco de registros por modo */
+enum { ST_BANK_USR = 0, ST_BANK_FIQ, ST_BANK_IRQ, ST_BANK_SVC, ST_BANK_ABT, ST_BANK_UND, ST_BANK_COUNT };
+
 typedef struct StCpu {
-    uint32_t r[16];
+    uint32_t r[16];           /* registros visibles en el modo actual */
     uint32_t n, z, c, v, q;   /* flags (0/1) */
-    uint32_t cpsr_ctrl;       /* modo, bits I/F/T */
-    uint32_t spsr;
+    uint32_t cpsr_ctrl;       /* modo, bits I/F (el bit T no se guarda: lo da el código) */
+    uint32_t spsr;            /* SPSR del modo actual */
     uint32_t next_pc;         /* dirección a la que "volvió" la última función */
     void* user;
+    /* Copias de los registros con banco de los modos que no están activos */
+    uint32_t bank_r13[ST_BANK_COUNT], bank_r14[ST_BANK_COUNT], bank_spsr[ST_BANK_COUNT];
+    uint32_t usr_r8_12[5], fiq_r8_12[5];
 } StCpu;
 
 typedef void (*StFn)(StCpu*);
@@ -48,6 +54,10 @@ typedef struct StPlatform {
     void (*unimpl)(StCpu*, uint32_t addr, uint32_t insn, int thumb);
     void (*miss)(StCpu*, uint32_t addr);       /* función no encontrada */
     void (*halt)(StCpu*, const char* why);
+    /* Coprocesador distinto de CP15 (en el ARM946E-S no existe: el hardware daría
+     * "undefined"). read=1 para MRC (el valor devuelto va a Rd). */
+    uint32_t (*coproc)(StCpu*, int cp, int op1, int crn, int crm, int op2, uint32_t v, int read);
+    void (*bkpt)(StCpu*, uint32_t num);
 } StPlatform;
 
 extern StPlatform st_platform;
@@ -93,6 +103,13 @@ void st_mcr(StCpu* c, int cp, int op1, int crn, int crm, int op2, uint32_t v);
 uint32_t st_get_cpsr(StCpu* c);
 void st_msr(StCpu* c, int spsr, int fields, uint32_t v);
 void st_restore_cpsr(StCpu* c);
+/* Retorno de excepción (MOVS/SUBS pc, LDM {..pc}^): CPSR = SPSR y devuelve el destino
+ * con bit0 = Thumb según el bit T restaurado. */
+uint32_t st_exception_return(StCpu* c, uint32_t pc);
+void st_set_mode(StCpu* c, uint32_t mode);           /* cambia de modo y de banco */
+int st_mode_bank(uint32_t mode);
+uint32_t st_user_reg(StCpu* c, int r);                 /* LDM/STM con bit S */
+void st_set_user_reg(StCpu* c, int r, uint32_t v);
 
 /* ---- Ayudas aritméticas (inline) ---- */
 static inline uint32_t st_ror(uint32_t v, uint32_t s) {

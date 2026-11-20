@@ -42,8 +42,8 @@ def _set_nz(var: str) -> str:
 def _write_reg(rd: int, val: str, s: bool, *, link_ret=False) -> str:
     if rd != 15:
         return f"c->r[{rd}] = {val};"
-    if s:
-        return f"st_restore_cpsr(c); ST_INDIRECT({val});"
+    if s:  # retorno de excepción: CPSR = SPSR (puede volver a Thumb)
+        return f"ST_INDIRECT(st_exception_return(c, {val}));"
     return f"ST_INDIRECT({val});"
 
 
@@ -78,7 +78,12 @@ def data_processing(ins: Ins, w: int, pc: int) -> None:
             op2_txt = f"r{rm}" + (f", {SHIFT_NAMES[typ]} #{amt}" if amt or typ else "")
     a = R(rn, pc if not (w & 0x10 and not w & (1 << 25)) else pc + 4)
     name = DP_OPS[op]
-    ins.asm = f"{name}{'s' if s and op not in (8, 9, 10, 11) else ''} r{rd}, r{rn}, {op2_txt}"
+    if op in (13, 15):
+        ins.asm = f"{name}{'s' if s else ''} r{rd}, {op2_txt}"
+    elif op in (8, 9, 10, 11):
+        ins.asm = f"{name} r{rn}, {op2_txt}"
+    else:
+        ins.asm = f"{name}{'s' if s else ''} r{rd}, r{rn}, {op2_txt}"
     logical = op in (0, 1, 8, 9, 12, 13, 14, 15)
     # Cálculo
     if op in (0, 8):
@@ -312,31 +317,43 @@ def block_transfer(ins: Ins, w: int, pc: int) -> None:
         start = f"base - {4 * n}" if p else f"base - {4 * n} + 4"
         new = f"base - {4 * n}"
     lines.append(f"uint32_t a = ({start}) & ~3u;")
+    user_bank = s and not (load and 15 in regs)   # LDM/STM ^ sin PC: registros de usuario
     if load:
         for i, r in enumerate(regs):
             lines.append(f"uint32_t v{r} = st_read32(c, a + {4 * i});")
-        if wb and rn not in regs:
-            lines.append(f"c->r[{rn}] = {new};")
+        # ARMv5 con la base en la lista: hay escritura si es el único registro o no es el
+        # último (GBATEK); si no, gana el valor cargado.
+        wb_now = wb and (rn not in regs or regs == [rn] or regs[-1] != rn)
         for r in regs:
             if r != 15:
-                lines.append(f"c->r[{r}] = v{r};")
+                lines.append(f"st_set_user_reg(c, {r}, v{r});" if user_bank and r >= 8 else f"c->r[{r}] = v{r};")
+        if wb_now:
+            lines.append(f"c->r[{rn}] = {new};")
         if 15 in regs:
             if s:
-                lines.append("st_restore_cpsr(c);")
-            if rn == 13 and not s:
+                lines.append("ST_INDIRECT(st_exception_return(c, v15));")
+                ins.kind = INDIRECT
+            elif rn == 13:
                 lines.append("ST_RETURN(v15);")
                 ins.kind = RET
             else:
                 lines.append("ST_INDIRECT(v15);")
                 ins.kind = INDIRECT
     else:
+        # ARMv5: con la base en la lista siempre se guarda el valor antiguo
         for i, r in enumerate(regs):
-            val = h(pc + 4) if r == 15 else f"c->r[{r}]"
+            if r == 15:
+                val = h(pc + 4)
+            elif user_bank and r >= 8:
+                val = f"st_user_reg(c, {r})"
+            else:
+                val = f"c->r[{r}]"
             lines.append(f"st_write32(c, a + {4 * i}, {val});")
         if wb:
             lines.append(f"c->r[{rn}] = {new};")
     mode = ("i" if u else "d") + ("b" if p else "a")
-    ins.asm = f"{'ldm' if load else 'stm'}{mode} r{rn}{'!' if wb else ''}, {{{','.join('r%d' % r for r in regs)}}}"
+    ins.asm = (f"{'ldm' if load else 'stm'}{mode} r{rn}{'!' if wb else ''}, "
+               f"{{{','.join('r%d' % r for r in regs)}}}{'^' if s else ''}")
     ins.code = "{ " + " ".join(lines) + " }"
 
 
@@ -422,6 +439,11 @@ def translate(addr: int, w: int) -> Ins:
             if (w & 0x0FB0FFF0) == 0x0120F000:  # MSR reg
                 ins.code = f"st_msr(c, {int(bool(w & (1 << 22)))}, {(w >> 16) & 0xF}, c->r[{w & 0xF}]);"
                 ins.asm = "msr"
+                return ins
+            if (w & 0x0FF000F0) == 0x01200070:  # BKPT
+                num = ((w >> 4) & 0xFFF0) | (w & 0xF)
+                ins.code = f"st_bkpt(c, {num});"
+                ins.asm = f"bkpt {num:#x}"
                 return ins
             if (w & 0x01900000) == 0x01000000:  # TST/TEQ/CMP/CMN sin S: otro espacio
                 return undefined(ins)

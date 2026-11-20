@@ -46,7 +46,22 @@ static void default_halt(StCpu* c, const char* why) {
     abort();
 }
 
-StPlatform st_platform = {default_io_read, default_io_write, default_swi, default_unimpl, default_miss, default_halt};
+static uint32_t default_coproc(StCpu* c, int cp, int op1, int crn, int crm, int op2, uint32_t v, int read) {
+    (void)c; (void)v;
+    static int warned;
+    if (!warned++)
+        fprintf(stderr, "[st] coprocesador p%d no existe en el ARM946E-S (%s op1=%d c%d c%d op2=%d); se ignora\n", cp,
+                read ? "mrc" : "mcr", op1, crn, crm, op2);
+    return 0;
+}
+static void default_bkpt(StCpu* c, uint32_t num) {
+    char why[32];
+    snprintf(why, sizeof why, "bkpt %u", num);
+    st_platform.halt(c, why);
+}
+
+StPlatform st_platform = {default_io_read, default_io_write, default_swi, default_unimpl, default_miss, default_halt,
+                          default_coproc, default_bkpt};
 
 /* ---------------------------------------------------------------- memoria */
 uint8_t* st_ptr(uint32_t addr, uint32_t size) {
@@ -109,7 +124,7 @@ static size_t n_overrides, cap_overrides;
 
 void st_init(StCpu* c) {
     memset(c, 0, sizeof *c);
-    c->cpsr_ctrl = 0x1F; /* modo sistema */
+    c->cpsr_ctrl = 0xDF; /* modo sistema, IRQ y FIQ desactivadas */
     c->r[13] = 0x02FFFC00u;
 }
 
@@ -183,19 +198,19 @@ const char* st_symbol_for(uint32_t addr) {
 
 /* ----------------------------------------------------------------- sistema */
 void st_swi(StCpu* c, uint32_t num) { st_platform.swi(c, num); }
-void st_bkpt(StCpu* c, uint32_t num) { (void)num; st_platform.halt(c, "bkpt"); }
+void st_bkpt(StCpu* c, uint32_t num) { st_platform.bkpt(c, num); }
 void st_unimpl(StCpu* c, uint32_t addr, uint32_t insn, int thumb) { st_platform.unimpl(c, addr, insn, thumb); }
 
 static uint32_t cp15_regs[16][16][8];
 uint32_t st_mrc(StCpu* c, int cp, int op1, int crn, int crm, int op2) {
-    (void)c; (void)op1;
-    if (cp != 15) return 0;
+    if (cp != 15) return st_platform.coproc(c, cp, op1, crn, crm, op2, 0, 1);
+    (void)op1;
     if (crn == 0 && crm == 0 && op2 == 0) return 0x41059461u; /* ID ARM946E-S */
     return cp15_regs[crn & 15][crm & 15][op2 & 7];
 }
 void st_mcr(StCpu* c, int cp, int op1, int crn, int crm, int op2, uint32_t v) {
-    (void)c; (void)op1;
-    if (cp != 15) return;
+    if (cp != 15) { st_platform.coproc(c, cp, op1, crn, crm, op2, v, 0); return; }
+    (void)op1;
     cp15_regs[crn & 15][crm & 15][op2 & 7] = v;
     if (crn == 9 && crm == 1 && op2 == 0) st_dtcm_base = v & 0xFFFFF000u;         /* DTCM */
     if (crn == 9 && crm == 1 && op2 == 1) {                                          /* ITCM */
@@ -204,16 +219,73 @@ void st_mcr(StCpu* c, int cp, int op1, int crn, int crm, int op2, uint32_t v) {
     }
 }
 uint32_t st_get_cpsr(StCpu* c) {
-    return (c->n << 31) | (c->z << 30) | (c->c << 29) | (c->v << 28) | (c->q << 27) | (c->cpsr_ctrl & 0xFF);
+    return (c->n << 31) | (c->z << 30) | (c->c << 29) | (c->v << 28) | (c->q << 27) | (c->cpsr_ctrl & 0xDF);
 }
+
+/* ------------------------------------------------------- modos y bancos */
+int st_mode_bank(uint32_t mode) {
+    switch (mode & 0x1F) {
+    case 0x11: return ST_BANK_FIQ;
+    case 0x12: return ST_BANK_IRQ;
+    case 0x13: return ST_BANK_SVC;
+    case 0x17: return ST_BANK_ABT;
+    case 0x1B: return ST_BANK_UND;
+    default: return ST_BANK_USR;   /* usuario y sistema comparten registros */
+    }
+}
+
+void st_set_mode(StCpu* c, uint32_t mode) {
+    int ob = st_mode_bank(c->cpsr_ctrl), nb = st_mode_bank(mode);
+    c->cpsr_ctrl = (c->cpsr_ctrl & ~0x1Fu) | (mode & 0x1F);
+    if (ob == nb) return;
+    c->bank_r13[ob] = c->r[13];
+    c->bank_r14[ob] = c->r[14];
+    c->bank_spsr[ob] = c->spsr;
+    if (ob == ST_BANK_FIQ || nb == ST_BANK_FIQ) {
+        uint32_t* save = ob == ST_BANK_FIQ ? c->fiq_r8_12 : c->usr_r8_12;
+        uint32_t* load = nb == ST_BANK_FIQ ? c->fiq_r8_12 : c->usr_r8_12;
+        memcpy(save, &c->r[8], sizeof c->usr_r8_12);
+        memcpy(&c->r[8], load, sizeof c->usr_r8_12);
+    }
+    c->r[13] = c->bank_r13[nb];
+    c->r[14] = c->bank_r14[nb];
+    c->spsr = c->bank_spsr[nb];
+}
+
+uint32_t st_user_reg(StCpu* c, int r) {
+    int b = st_mode_bank(c->cpsr_ctrl);
+    if (r >= 8 && r <= 12 && b == ST_BANK_FIQ) return c->usr_r8_12[r - 8];
+    if (r >= 13 && r <= 14 && b != ST_BANK_USR) return r == 13 ? c->bank_r13[0] : c->bank_r14[0];
+    return c->r[r];
+}
+void st_set_user_reg(StCpu* c, int r, uint32_t v) {
+    int b = st_mode_bank(c->cpsr_ctrl);
+    if (r >= 8 && r <= 12 && b == ST_BANK_FIQ) c->usr_r8_12[r - 8] = v;
+    else if (r >= 13 && r <= 14 && b != ST_BANK_USR) { if (r == 13) c->bank_r13[0] = v; else c->bank_r14[0] = v; }
+    else c->r[r] = v;
+}
+
 void st_msr(StCpu* c, int spsr, int fields, uint32_t v) {
     uint32_t mask = 0;
     if (fields & 1) mask |= 0x000000FFu;
-    if (fields & 8) mask |= 0xFF000000u;
-    if (spsr) { c->spsr = (c->spsr & ~mask) | (v & mask); return; }
-    uint32_t cur = st_get_cpsr(c);
-    cur = (cur & ~mask) | (v & mask);
+    if (fields & 8) mask |= 0xF8000000u;
+    if (spsr) {
+        if (st_mode_bank(c->cpsr_ctrl) != ST_BANK_USR) c->spsr = (c->spsr & ~mask) | (v & mask);
+        return;
+    }
+    if ((c->cpsr_ctrl & 0x1F) == 0x10) mask &= 0xFF000000u;  /* en modo usuario solo los flags */
+    uint32_t cur = (st_get_cpsr(c) & ~mask) | (v & mask);
     c->n = cur >> 31; c->z = (cur >> 30) & 1; c->c = (cur >> 29) & 1; c->v = (cur >> 28) & 1; c->q = (cur >> 27) & 1;
-    c->cpsr_ctrl = cur & 0xFF;
+    if (mask & 0xFF) {
+        st_set_mode(c, cur & 0x1F);
+        c->cpsr_ctrl = cur & 0xDF;   /* el bit T lo determina el código que se ejecuta */
+    }
 }
+
 void st_restore_cpsr(StCpu* c) { st_msr(c, 0, 9, c->spsr); }
+
+uint32_t st_exception_return(StCpu* c, uint32_t pc) {
+    uint32_t t = (c->spsr >> 5) & 1;
+    if (st_mode_bank(c->cpsr_ctrl) != ST_BANK_USR) st_restore_cpsr(c);
+    return t ? ((pc & ~1u) | 1u) : (pc & ~3u);
+}
