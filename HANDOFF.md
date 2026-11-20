@@ -188,6 +188,14 @@ que llamó a SaveContext; todas las llamadas usan `ST_CALLR*` y, si vuelven a ot
 a `st_resume` (switch con los puntos de vuelta de llamada de la función). Windows: CreateFiber;
 resto: ucontext (probado aquí con `tests/threads/threads.S` vía `Threads` en test_pipeline; las
 fibras de Windows aún no se han probado).
+Con la ROM, las fibras funcionan en Windows (varios cambios de hilo; 8 funciones aprendidas, cada
+vuelta recompila 1 archivo) hasta "un hilo del juego terminó sin cambiar a otro": se identificaba
+al hilo saliente por la pila en el momento del LDM, pero el SDK apila más entre SaveContext y
+LoadContext, así que no se reconocía y se creaba una fibra nueva en un punto intermedio. Ahora la
+clave es la pila escrita en el último guardado de contexto (STM que incluye r4-r14,
+`st_thread_note_saved_sp`). La prueba de hilos apila entre ambos y falla sin el arreglo. Ojo: las
+direcciones intermedias aprendidas en esas vueltas (p. ej. 02031C5C) quedan en recomp_misses.txt;
+no rompen nada (se traducen como funciones extra).
 **Compilación incremental real**: archivos `rc_<módulo>_<rango 32 KB>.c` con sus propios
 prototipos; aprender una función solo recompila su archivo y los que la llaman.
 

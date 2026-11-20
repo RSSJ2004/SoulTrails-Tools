@@ -54,6 +54,10 @@ static StCpu* g_cpu;
 volatile int st_fiber_resumed;
 unsigned long st_thread_switches;
 
+static uint32_t saved_sp;          /* pila del último contexto guardado (STM de r4-r14) */
+static int saved_sp_valid;
+void st_thread_note_saved_sp(uint32_t sp) { saved_sp = sp; saved_sp_valid = 1; }
+
 static uint32_t prev_user_sp;
 static int prev_user_sp_valid;
 
@@ -134,6 +138,9 @@ static void switch_native(int to) {
  * suspendida con old_sp. Devuelve 0 si no hace falta cambiar (mismo hilo) y 1 cuando, más
  * tarde, otro hilo vuelve a esta fibra. */
 int st_thread_switch(StCpu* c, uint32_t target_pc, uint32_t target_sp, uint32_t old_sp) {
+    /* El hilo saliente se reconocerá por la pila que quedó en su contexto guardado (puede
+     * diferir de la actual si el SDK apiló algo entre SaveContext y LoadContext) */
+    if (saved_sp_valid) { old_sp = saved_sp; saved_sp_valid = 0; }
     if (target_sp == old_sp) return 0;
     g_cpu = c;
     if (!ensure_main()) { st_platform.halt(c, "no se pudo crear la fibra principal"); return 0; }

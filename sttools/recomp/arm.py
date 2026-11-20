@@ -373,6 +373,11 @@ def block_transfer(ins: Ins, w: int, pc: int) -> None:
             else:
                 val = f"c->r[{r}]"
             lines.append(f"st_write32(c, a + {4 * i}, {val});")
+        if (w & 0x7FF0) == 0x7FF0:
+            # Guardado de un contexto (r4-r14): la pila guardada identifica al hilo cuando se
+            # reanude (SaveContext del SDK o el cambio de hilo desde la IRQ)
+            sp = "st_user_reg(c, 13)" if user_bank else "c->r[13]"
+            lines.append(f"st_thread_note_saved_sp({sp});")
         if wb:
             lines.append(f"c->r[{rn}] = {new};")
     mode = ("i" if u else "d") + ("b" if p else "a")

@@ -113,6 +113,7 @@ extern unsigned long st_thread_switches;
 int st_thread_switch(StCpu* c, uint32_t target_pc, uint32_t target_sp, uint32_t old_sp);
 uint32_t st_thread_resume_pc(void);
 void st_thread_note_user_sp(uint32_t old_sp);
+void st_thread_note_saved_sp(uint32_t sp);
 void st_thread_forget_user_sp(void);
 int st_thread_take_prev_sp(uint32_t* sp);
 /* IRQ fuera de las esperas: se comprueba al entrar en cada función generada (ST_TRACE) */

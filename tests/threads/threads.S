@@ -18,6 +18,7 @@ _start:
     bl save_context
     cmp r0, #0
     bne resumed
+    push {r4-r7}
     ldr r0, =ctx_b
     bl load_context
     bkpt #1
@@ -47,7 +48,8 @@ thread_b:
     bl save_context
     cmp r0, #0
     bne back_in_b
-    ldr r0, =ctx_a              @ vuelve a A, que nos devuelve el control otra vez
+    push {r4-r7}                @ la pila cambia entre SaveContext y LoadContext (como el SDK)
+    ldr r0, =ctx_a              @ vuelve a A
     bl load_context
     bkpt #3
 back_in_b:
